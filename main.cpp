@@ -4,6 +4,9 @@
 // click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
 int main() {
 int a;
+
+    cout << "Hello world";
+
     return 0;
 }
 
