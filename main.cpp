@@ -21,6 +21,7 @@ public:
 
     void display() override {
         cout << "Resistor " << name << ": " << value << " Ohms, Nodes: " << node1 << " - " << node2 << endl;
+        cout;
     }
 };
 
