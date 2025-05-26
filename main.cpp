@@ -43,6 +43,7 @@ public:
 
     void display() override {
         cout << "Inductor " << name << ": " << value << " H, Nodes: " << node1 << " - " << node2 << endl;
+
     }
 };
 
