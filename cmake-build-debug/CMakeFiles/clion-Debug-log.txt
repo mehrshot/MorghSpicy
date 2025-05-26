@@ -1,6 +1,0 @@
-"C:\Program Files\JetBrains\CLion 2024.2.1\bin\cmake\win\x64\bin\cmake.exe" -DCMAKE_BUILD_TYPE=Debug -G "MinGW Makefiles" -S "C:\Users\User\Desktop\New folder" -B "C:\Users\User\Desktop\New folder\cmake-build-debug"
-CMake Error at CMakeLists.txt:1 (cmake_minimum_required):
-  CMake 3.30 or higher is required.  You are running version 3.29.6
-
-
--- Configuring incomplete, errors occurred!
