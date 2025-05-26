@@ -1,0 +1,38 @@
+# OS-specific files
+.DS_Store           # macOS specific
+Thumbs.db           # Windows specific
+
+# Compiled object files
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+
+# Executables
+*.exe
+*.out
+
+# IDE and editor files
+.vscode/            # VS Code settings
+.idea/              # IntelliJ IDEA or WebStorm
+*.suo
+*.user
+*.userosscache
+*.sln
+
+# Build directories
+build/
+bin/
+Debug/
+Release/
+
+# Other IDEs
+*.cbp               # Code::Blocks
+*.pro               # Qt project files
+*.komodoproject     # Komodo IDE
+
+# Temporary files
+*.log
+*.bak
+*.swp
