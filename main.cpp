@@ -2,22 +2,20 @@
 #include <string>
 #include <vector>
 using namespace std;
-
+enum Types { RESISTOR, CAPACITOR, INDUCTOR, VOLTAGE_SOURCE, CURRENT_SOURCE, NONE };
 class Element {
 public:
     string name;
     int node1, node2;
-
-    Element(string n, int n1, int n2) : name(n), node1(n1), node2(n2) {}
-
+    double value;
+    Types type;
+    Element(string n, int n1, int n2,double v,Types t) : name(n), node1(n1), node2(n2), value(v) , type(t){}
     virtual void display() = 0;
 };
 
 class Resistor : public Element {
 public:
-    double value;
-
-    Resistor(string n, int n1, int n2, double v) : Element(n, n1, n2), value(v) {}
+    Resistor(string n, int n1, int n2, double v) : Element(n, n1, n2,v,RESISTOR){}
 
     void display() override {
         cout << "Resistor " << name << ": " << value << " Ohms, Nodes: " << node1 << " - " << node2 << endl;
@@ -27,9 +25,7 @@ public:
 
 class Capacitor : public Element {
 public:
-    double value;
-
-    Capacitor(string n, int n1, int n2, double v) : Element(n, n1, n2), value(v) {}
+    Capacitor(string n, int n1, int n2, double v) : Element(n, n1, n2,v,CAPACITOR){}
 
     void display() override {
         cout << "Capacitor " << name << ": " << value << " F, Nodes: " << node1 << " - " << node2 << endl;
@@ -38,10 +34,7 @@ public:
 
 class Inductor : public Element {
 public:
-    double value;
-
-    Inductor(string n, int n1, int n2, double v) : Element(n, n1, n2), value(v) {}
-
+    Inductor(string n, int n1, int n2, double v) : Element(n, n1, n2,v,INDUCTOR){}
     void display() override {
         cout << "Inductor " << name << ": " << value << " H, Nodes: " << node1 << " - " << node2 << endl;
 
@@ -50,12 +43,20 @@ public:
 
 class VoltageSource : public Element {
 public:
-    double value;
+    VoltageSource(string n, int n1, int n2, double v) : Element(n, n1, n2,v,VOLTAGE_SOURCE){}
 
-    VoltageSource(string n, int n1, int n2, double v) : Element(n, n1, n2), value(v) {}
 
     void display() override {
         cout << "Voltage Source " << name << ": " << value << " V, Nodes: " << node1 << " - " << node2 << endl;
+    }
+};
+class CurrentSource : public Element {
+public:
+    CurrentSource(string n, int n1, int n2, double v) : Element(n, n1, n2,v,CURRENT_SOURCE){}
+
+
+    void display() override {
+        cout << "Current Source " << name << ": " << value << " V, Nodes: " << node1 << " - " << node2 << endl;
     }
 };
 
