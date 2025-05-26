@@ -1,15 +1,16 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include "Model/ElementTypes.h"
+
 using namespace std;
-enum Types { RESISTOR, CAPACITOR, INDUCTOR, VOLTAGE_SOURCE, CURRENT_SOURCE, NONE };
 class Element {
 public:
     string name;
     int node1, node2;
     double value;
-    Types type;
-    Element(string n, int n1, int n2,double v,Types t) : name(n), node1(n1), node2(n2), value(v) , type(t){}
+    ElementType type;
+    Element(string n, int n1, int n2,double v,ElementType t) : name(n), node1(n1), node2(n2), value(v) , type(t){}
     virtual void display() = 0;
 };
 

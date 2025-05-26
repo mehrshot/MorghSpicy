@@ -3,4 +3,9 @@ project(MorghSpicy)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(MorghSpicy main.cpp)
+add_executable(MorghSpicy main.cpp
+        Model/Node.h
+        Model/Edge.h
+        Model/Graph.h
+        Model/ElementTypes.h
+)

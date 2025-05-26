@@ -1,0 +1,13 @@
+//
+// Created by Mehrshad on 5/26/2025.
+//
+
+#ifndef MORGHSPICY_ELEMENTTYPES_H
+#define MORGHSPICY_ELEMENTTYPES_H
+enum ElementType {
+    RESISTOR,
+    CAPACITOR,
+    INDUCTOR,
+    VOLTAGE_SOURCE
+};
+#endif //MORGHSPICY_ELEMENTTYPES_H
