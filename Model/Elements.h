@@ -1,9 +1,13 @@
-#include <iostream>
-#include <string>
-#include <vector>
-#include "Model/ElementTypes.h"
+//
+// Created by User on 5/26/2025.
+//
 
+#ifndef MORGHSPICY_ELEMENTS_H
+#define MORGHSPICY_ELEMENTS_H
+#include <iostream>
 using namespace std;
+#include "ElementTypes.h"
+
 class Element {
 public:
     string name;
@@ -14,18 +18,19 @@ public:
     virtual void display() = 0;
 };
 
+class Resistor : public Element {
+public:
+    Resistor(string n, int n1, int n2, double v) : Element(n, n1, n2,v,RESISTOR){}
+
+    void display() override {
+        cout << "Resistor " << name << ": " << value << " Ohms, Nodes: " << node1 << " - " << node2 << endl;
+        cout;
+    }
+};
 
 class Capacitor : public Element {
 public:
     Capacitor(string n, int n1, int n2, double v) : Element(n, n1, n2,v,CAPACITOR){}
-
-    void display() override {
-        cout << "Capacitor " << name << ": " << value << " F, Nodes: " << node1 << " - " << node2 << endl;
-    }
-};
-class Resistor : public Element {
-public:
-    Resistor(string n, int n1, int n2, double v) : Element(n, n1, n2,v,RESISTOR){}
 
     void display() override {
         cout << "Capacitor " << name << ": " << value << " F, Nodes: " << node1 << " - " << node2 << endl;
@@ -60,31 +65,4 @@ public:
     }
 };
 
-class Circuit {
-private:
-    vector<Element*> elements;
-
-public:
-    void addElement(Element* e) {
-        elements.push_back(e);
-    }
-
-    void displayElements() {
-        for (auto e : elements) {
-            e->display();
-        }
-    }
-};
-
-int main() {
-    Circuit circuit;
-
-    circuit.addElement(new Resistor("R1", 1, 2, 1000));
-    circuit.addElement(new Capacitor("C1", 2, 0, 1e-6));
-    circuit.addElement(new Inductor("L1", 1, 0, 1e-3));
-    circuit.addElement(new VoltageSource("V1", 1, 0, 5));
-
-    circuit.displayElements();
-
-    return 0;
-}
+#endif //MORGHSPICY_ELEMENTS_H
