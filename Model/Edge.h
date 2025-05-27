@@ -15,5 +15,8 @@ private:
     ElementType element;
 public:
     Edge(Node* n1, Node* n2, ElementType type): node1(n1), node2(n2), element(type) {}
+    Node* getNode1() {return node1;}
+    Node* getNode2() {return node2;}
+    ElementType getElement() {return element;}
 };
 #endif //MORGHSPICY_EDGE_H

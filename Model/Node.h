@@ -12,5 +12,7 @@ private:
     string name;
 public:
     Node (int id, string name): id(id), name(name) {}
+    string getName() {return name;}
+    int getId() {return id;}
 };
 #endif //MORGHSPICY_NODE_H

@@ -6,7 +6,10 @@
 #define MORGHSPICY_GRAPH_H
 
 #include <vector>
+#include <bits/stdc++.h>
 #include "Edge.h"
+
+using namespace std;
 
 class Graph {
 private:
@@ -22,7 +25,16 @@ public:
     }
 
     void desplayGraph() {
-
+        cout << "Nodes in the graph:\n";
+        for (auto node: nodes) {
+            cout << "Node " << node->getName() << " (ID: " << node->getId() << ")\n";
+        }
+        cout << "\nEdges in the graph:\n";
+        for (auto edge: edges) {
+            cout << "Edge between Node " << edge->getNode1()->getName() << " and Node " << edge->getNode2()->getName()
+                 << " (Element: " << edge->getElement() << ")\n";
+        }
     }
 };
+
 #endif //MORGHSPICY_GRAPH_H
