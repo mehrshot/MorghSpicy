@@ -5,36 +5,92 @@
 #ifndef MORGHSPICY_GRAPH_H
 #define MORGHSPICY_GRAPH_H
 
-#include <vector>
-#include <bits/stdc++.h>
+#include "Common_Includes.h"
+#include "Node.h"
 #include "Edge.h"
-
-using namespace std;
+#include "Elements.h"
 
 class Graph {
 private:
-    vector <Node*> nodes;
-    vector <Edge*> edges;
+    std::vector<Node*> nodes;
+    std::vector<Edge*> edges;
+    std::vector<Element*> elements;
+
 public:
+    Graph() = default;
+
+    ~Graph() {
+        // Delete all Node objects pointed to
+        for (Node* node_ptr : nodes) {
+            delete node_ptr;
+        }
+        nodes.clear();
+
+        // Delete all Edge objects pointed to
+        for (Edge* edge_ptr : edges) {
+            delete edge_ptr;
+        }
+        edges.clear();
+
+        // Delete all Element objects pointed to
+        for (Element* elem_ptr : elements) {
+            delete elem_ptr;
+        }
+        elements.clear();
+    }
+
+    // Add Node
     void addNode(Node* node) {
         nodes.push_back(node);
     }
 
+    // Add Edge
     void addEdge(Edge* edge) {
         edges.push_back(edge);
     }
 
+    // Add Element
+    void addElement(Element* elem) {
+        elements.push_back(elem);
+    }
+
+    // Element Getter
+    const std::vector<Element*>& getElements() const {
+        return elements;
+    }
+
+    // Node Getter
+    const std::vector<Node*>& getNodes() const {
+        return nodes;
+    }
+
+    // Display
     void desplayGraph() {
-        cout << "Nodes in the graph:\n";
-        for (auto node: nodes) {
-            cout << "Node " << node->getName() << " (ID: " << node->getId() << ")\n";
+        std::cout << "Nodes in the graph:\n";
+        for (const auto& node : nodes) {
+            std::cout << "Node " << node->getName() << " (ID: " << node->getId() << ")\n";
         }
-        cout << "\nEdges in the graph:\n";
-        for (auto edge: edges) {
-            cout << "Edge between Node " << edge->getNode1()->getName() << " and Node " << edge->getNode2()->getName()
-                 << " (Element: " << edge->getElement() << ")\n";
+        std::cout << "\nElements in the graph:\n";
+        for (const auto& elem : elements) {
+            elem->display();
         }
     }
 };
 
-#endif //MORGHSPICY_GRAPH_H
+class Circuit {
+private:
+    std::vector<Element*> elements;
+
+public:
+    void addElement(Element* e) {
+        elements.push_back(e);
+    }
+
+    void displayElements() {
+        for (auto e : elements) {
+            e->display();
+        }
+    }
+};
+
+#endif // MORGHSPICY_GRAPH_H

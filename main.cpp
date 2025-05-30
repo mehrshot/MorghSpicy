@@ -1,90 +1,71 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include "Model/ElementTypes.h"
+#include <map>
+
+#include "Model/Node.h"
+#include "Model/Elements.h"
+#include "Model/Graph.h"
+#include "Model/MNASolver.h"
+
+#include <eigen3/Eigen/Dense>
 
 using namespace std;
-class Element {
-public:
-    string name;
-    int node1, node2;
-    double value;
-    ElementType type;
-    Element(string n, int n1, int n2,double v,ElementType t) : name(n), node1(n1), node2(n2), value(v) , type(t){}
-    virtual void display() = 0;
-};
-
-
-class Capacitor : public Element {
-public:
-    Capacitor(string n, int n1, int n2, double v) : Element(n, n1, n2,v,CAPACITOR){}
-
-    void display() override {
-        cout << "Capacitor " << name << ": " << value << " F, Nodes: " << node1 << " - " << node2 << endl;
-    }
-};
-class Resistor : public Element {
-public:
-    Resistor(string n, int n1, int n2, double v) : Element(n, n1, n2,v,RESISTOR){}
-
-    void display() override {
-        cout << "Capacitor " << name << ": " << value << " F, Nodes: " << node1 << " - " << node2 << endl;
-    }
-};
-
-class Inductor : public Element {
-public:
-    Inductor(string n, int n1, int n2, double v) : Element(n, n1, n2,v,INDUCTOR){}
-    void display() override {
-        cout << "Inductor " << name << ": " << value << " H, Nodes: " << node1 << " - " << node2 << endl;
-
-    }
-};
-
-class VoltageSource : public Element {
-public:
-    VoltageSource(string n, int n1, int n2, double v) : Element(n, n1, n2,v,VOLTAGE_SOURCE){}
-
-
-    void display() override {
-        cout << "Voltage Source " << name << ": " << value << " V, Nodes: " << node1 << " - " << node2 << endl;
-    }
-};
-class CurrentSource : public Element {
-public:
-    CurrentSource(string n, int n1, int n2, double v) : Element(n, n1, n2,v,CURRENT_SOURCE){}
-
-
-    void display() override {
-        cout << "Current Source " << name << ": " << value << " V, Nodes: " << node1 << " - " << node2 << endl;
-    }
-};
-
-class Circuit {
-private:
-    vector<Element*> elements;
-
-public:
-    void addElement(Element* e) {
-        elements.push_back(e);
-    }
-
-    void displayElements() {
-        for (auto e : elements) {
-            e->display();
-        }
-    }
-};
 
 int main() {
-    Circuit circuit;
+    Graph circuitGraph;
 
-    circuit.addElement(new Resistor("R1", 1, 2, 1000));
-    circuit.addElement(new Capacitor("C1", 2, 0, 1e-6));
-    circuit.addElement(new Inductor("L1", 1, 0, 1e-3));
-    circuit.addElement(new VoltageSource("V1", 1, 0, 5));
+    Node* gnd = new Node(0, "GND");
+    Node* n1 = new Node(1, "N1");
+    Node* n2 = new Node(2, "N2");
+    Node* n3 = new Node(3, "N3");
 
-    circuit.displayElements();
+    circuitGraph.addNode(gnd);
+    circuitGraph.addNode(n1);
+    circuitGraph.addNode(n2);
+    circuitGraph.addNode(n3);
+
+    double R_val = 1000.0;
+    double L_val = 1.0e-3;
+    double C_val = 1.0e-6;
+    double V1_val = 5.0;
+    double h = 1.0e-6;
+
+    VoltageSource* V_src = new VoltageSource("Vs", 0, 1, V1_val);
+    Resistor* R_test = new Resistor("R_test", 1, 2, R_val);
+    Capacitor* C_test = new Capacitor("C_test", 2, 3, C_val);
+    Inductor* L_test = new Inductor("L_test", 3, 0, L_val);
+    CurrentSource* I1_src = new CurrentSource("I1", 1, 0, 0.001);
+
+    circuitGraph.addElement(V_src);
+    circuitGraph.addElement(R_test);
+    circuitGraph.addElement(C_test);
+    circuitGraph.addElement(L_test);
+    circuitGraph.addElement(I1_src);
+
+    circuitGraph.desplayGraph();
+
+    MNASolver mnaSolver;
+
+    double timestep_h = 1.0e-6;
+
+    Eigen::VectorXd prev_solution;
+
+    mnaSolver.initializeMatrix(circuitGraph);
+
+    prev_solution.resize(mnaSolver.getNumNonGroundNodes() + mnaSolver.getNumVoltageSources() + mnaSolver.getNumInductors());
+    prev_solution.setZero();
+
+    mnaSolver.constructMNAMatrix(circuitGraph, timestep_h, prev_solution);
+
+    cout << "\n--- MNA Matrix constructed by general stamping ---" << endl;
+    mnaSolver.displayMatrix();
+
+    Eigen::VectorXd result = mnaSolver.solve();
+
+    mnaSolver.displaySolution();
+    mnaSolver.displayNodeVoltages();
+    mnaSolver.displayElementCurrents(circuitGraph);
 
     return 0;
 }
