@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION  )
 project(MorghSpicy CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -12,6 +12,7 @@ add_executable(MorghSpicy
         Model/CommandParser.cpp
         Model/NodeManager.h
         Model/NodeManager.cpp
+        Model/NodeNaming.h
 )
 
 target_include_directories(MorghSpicy PRIVATE ${CMAKE_SOURCE_DIR})
