@@ -24,22 +24,21 @@ public:
     // Constructor
     Element(std::string n, int n1, int n2, double v, ElementType t)
             : name(n), node1(n1), node2(n2), value(v), type(t) {}
-    virtual ~Element() = default; // Virtual destructor for proper memory cleanup of derived classes
+    virtual ~Element() = default;
 
-    // New: Pure virtual method for stamping the element's contribution into the MNA matrix
-    // A: The MNA matrix where the element's contributions are added.
-    // b: The right-hand side vector of equations.
-    // node_id_to_matrix_idx: Map from actual Node ID to its 0-based matrix index.
-    // extra_var_start_idx: The starting index for extra variables in the matrix (after node voltages).
-    // prev_solution: The solution vector from the previous timestep (for transient elements like C, L).
-    // h: The timestep (required for transient analysis, i.e., C and L).
+    void setValue(double newValue) {
+        value = newValue;
+    }
+    double getValue() const {
+        return value;
+    }
+
     virtual void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                           const std::map<int, int>& node_id_to_matrix_idx,
                           int extra_var_start_idx,
                           const Eigen::VectorXd& prev_solution,
                           double h) = 0;
 
-    // Virtual display method
     virtual void display() = 0;
 };
 
@@ -84,7 +83,7 @@ public:
                   const std::map<int, int>& node_id_to_matrix_idx,
                   int extra_var_start_idx,
                   const Eigen::VectorXd& prev_solution,
-                  double h) override; // Declaration of stampMNA
+                  double h) override;
 };
 
 // Derived class for VoltageSource
@@ -100,7 +99,7 @@ public:
                   const std::map<int, int>& node_id_to_matrix_idx,
                   int extra_var_start_idx,
                   const Eigen::VectorXd& prev_solution,
-                  double h) override; // Declaration of stampMNA
+                  double h) override;
 };
 
 // Derived class for CurrentSource
@@ -114,7 +113,7 @@ public:
                   const std::map<int, int>& node_id_to_matrix_idx,
                   int extra_var_start_idx,
                   const Eigen::VectorXd& prev_solution,
-                  double h) override; // Declaration of stampMNA
+                  double h) override;
 };
 
 #endif // MORGHSPICY_ELEMENTS_H

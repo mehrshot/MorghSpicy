@@ -20,7 +20,7 @@ MNASolver::MNASolver() :
 // Method to initialize the MNA matrix dimensions
 void MNASolver::initializeMatrix(const Graph& circuitGraph) {
     // 1. Identify all unique non-ground nodes and assign them matrix indices.
-     std::set<int> unique_node_ids;
+    std::set<int> unique_node_ids;
 
     const std::vector<Node*>& all_nodes_in_graph = circuitGraph.getNodes();
     for (Node* node_ptr : all_nodes_in_graph) {
@@ -33,6 +33,26 @@ void MNASolver::initializeMatrix(const Graph& circuitGraph) {
     std::sort(sorted_non_ground_node_ids.begin(), sorted_non_ground_node_ids.end());
 
     num_non_ground_nodes = sorted_non_ground_node_ids.size();
+
+    // Check for a ground node or any non-ground nodes for a solvable circuit
+    if (num_non_ground_nodes == 0 && all_nodes_in_graph.empty()) { // If no nodes are defined at all.
+        std::cerr << "Error: Circuit is empty. No nodes defined." << std::endl;
+        total_unknowns = 0; // Set unknowns to 0 to prevent matrix resizing with 0 dimensions
+        return; // Exit early if circuit is empty
+    }
+    bool has_ground_node = false;
+    for (Node* node_ptr : all_nodes_in_graph) {
+        if (node_ptr->getId() == 0) {
+            has_ground_node = true;
+            break;
+        }
+    }
+    if (!has_ground_node) {
+        std::cerr << "Error: No ground node (ID 0) detected in the circuit. A reference node is required." << std::endl;
+        total_unknowns = 0;
+        return;
+    }
+
 
     node_id_to_matrix_idx.clear();
     for (int i = 0; i < num_non_ground_nodes; ++i) {
@@ -54,6 +74,12 @@ void MNASolver::initializeMatrix(const Graph& circuitGraph) {
 
     // 3. Calculate total MNA matrix dimensions.
     total_unknowns = num_non_ground_nodes + num_voltage_sources + num_inductors;
+
+    // If, after counting, total_unknowns is still 0, it indicates an issue (e.g., only ground node).
+    if (total_unknowns == 0) {
+        std::cerr << "Error: No non-ground nodes or extra variables. Circuit might not be solvable." << std::endl;
+        return;
+    }
 
     // 4. Resize Eigen matrices and vectors and set them to zero.
     A_matrix.resize(total_unknowns, total_unknowns);
@@ -93,11 +119,17 @@ void MNASolver::constructMNAMatrix(const Graph& circuitGraph, double timestep_h,
 
 Eigen::VectorXd MNASolver::solve() {
     if (total_unknowns == 0) {
-        std::cerr << "Error: No unknowns to solve for. Circuit might be empty or improperly defined." << std::endl;
-        solution_vector.setZero(); // Return a zero vector as an error indicator
+        std::cerr << "Error: Cannot solve. Total unknowns is zero." << std::endl;
+        solution_vector.setZero();
         return solution_vector;
     }
-    
+
+    if (!A_matrix.fullPivLu().isInvertible()) {
+        std::cerr << "Error: Circuit matrix is singular (not invertible). Cannot solve." << std::endl;
+        solution_vector.setZero(); // Return zero vector to indicate failure
+        return solution_vector;
+    }
+
     solution_vector = A_matrix.lu().solve(b_vector);
     std::cout << "MNA System solved." << std::endl;
     return solution_vector;

@@ -44,6 +44,15 @@ public:
         nodes.push_back(node);
     }
 
+    Element* findElement(const std::string& name) const {
+        for (Element* elem_ptr : elements) {
+            if (elem_ptr->name == name) {
+                return elem_ptr;
+            }
+        }
+        return nullptr;
+    }
+
     // Add Edge
     void addEdge(Edge* edge) {
         edges.push_back(edge);

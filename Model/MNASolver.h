@@ -25,10 +25,6 @@ private:
 
     std::map<int, int> node_id_to_matrix_idx;
 
-    int getExtraVariableStartIndex() const {
-        return num_non_ground_nodes;
-    }
-
 public:
     MNASolver();
     ~MNASolver() = default;
@@ -48,12 +44,17 @@ public:
     int getNumVoltageSources() const { return num_voltage_sources; }
     int getNumInductors() const { return num_inductors; }
     const std::map<int, int>& getNodeToMatrixIdxMap() const { return node_id_to_matrix_idx; }
+    int getTotalUnknowns() const { return total_unknowns; }
 
     // Display methods
     void displayMatrix() const;
     void displaySolution() const;
     void displayNodeVoltages() const;
     void displayElementCurrents(const Graph& circuitGraph) const;
+
+    int getExtraVariableStartIndex() const {
+        return num_non_ground_nodes;
+    }
 };
 
 
