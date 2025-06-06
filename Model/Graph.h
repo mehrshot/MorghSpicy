@@ -84,6 +84,20 @@ public:
             elem->display();
         }
     }
+
+    //deleting an element by its name(used in command handler)
+    bool removeElementByName(const std::string& name) {
+        for (auto it = elements.begin(); it != elements.end(); ++it) {
+            if ((*it)->name == name) {
+                delete *it;
+                std::cout << "Element '" << name << "' removed.\n";
+                return true;
+            }
+        }
+        std::cerr << "Element '" << name << "' not found.\n";
+        return false;
+    }
+
 };
 
 class Circuit {

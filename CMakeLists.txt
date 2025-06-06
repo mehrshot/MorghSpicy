@@ -9,7 +9,9 @@ add_executable(MorghSpicy
         main.cpp
         Model/Elements.cpp
         Model/MNASolver.cpp
-        Controller/SimulatorController.cpp
+        Model/CommandParser.cpp
+        Model/NodeManager.h
+        Model/NodeManager.cpp
 )
 
 target_include_directories(MorghSpicy PRIVATE ${CMAKE_SOURCE_DIR})
