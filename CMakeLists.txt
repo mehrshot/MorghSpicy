@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION  )
+cmake_minimum_required(VERSION 3.30)
 project(MorghSpicy CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -9,10 +9,9 @@ add_executable(MorghSpicy
         main.cpp
         Model/Elements.cpp
         Model/MNASolver.cpp
-        Model/CommandParser.cpp
-        Model/NodeManager.h
+        Controller/CommandParser.cpp
         Model/NodeManager.cpp
-        Model/NodeNaming.h
+        Controller/SimulationRunner.cpp
 )
 
 target_include_directories(MorghSpicy PRIVATE ${CMAKE_SOURCE_DIR})

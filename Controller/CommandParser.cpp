@@ -9,8 +9,8 @@
 #include <unordered_set>
 #include <regex>
 
-CommandParser::CommandParser(Graph* g, NodeManager* nm) : graph(g), nodeManager(nm) {}
-
+CommandParser::CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner)
+        : graph(g), nodeManager(nm), simRunner(runner) {}
 bool isNumber(const std::string& s) {
     std::regex pattern(R"(^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$)");
     return std::regex_match(s, pattern);
@@ -161,11 +161,76 @@ void CommandParser::parseCommand(const std::string& line) {
     } else if (cmd == "list") {
         graph->desplayGraph();
 
-    } else {
+    }
+    else if (cmd == "print") {
+        handlePrintCommand(iss);
+    }
+    else {
         std::cerr << "Error: Unknown command: " << cmd << std::endl;
     }
 }
 
+void CommandParser::handlePrintCommand(std::istringstream& iss) {
+    std::string analysis_type;
+    iss >> analysis_type;
+
+    if (analysis_type == "TRAN") {
+        // --- START OF CORRECTION ---
+        std::string tstep_str, tstop_str;
+        if (!(iss >> tstep_str >> tstop_str)) {
+            std::cerr << "Error: Syntax error. Usage: print TRAN <tstep> <tstop> <var1> <var2> ..." << std::endl;
+            return;
+        }
+
+        double tstep = parseValueWithPrefix(tstep_str);
+        double tstop = parseValueWithPrefix(tstop_str);
+
+        if (tstep <= 0 || tstop <= 0 || tstep > tstop) {
+            std::cerr << "Error: Invalid time parameters for TRAN analysis." << std::endl;
+            return;
+        }
+        // --- END OF CORRECTION ---
+
+        std::vector<OutputVariable> requested_vars;
+        std::string var_token;
+        std::regex var_regex(R"((V|I)\((.+)\))"); // Regex to capture V(node) or I(element)
+
+        while (iss >> var_token) {
+            std::smatch matches;
+            if (std::regex_match(var_token, matches, var_regex)) {
+                std::string type = matches[1].str();
+                std::string name = matches[2].str();
+
+                OutputVariable out_var;
+                if (type == "V") {
+                    out_var.type = OutputVariable::VOLTAGE;
+                    // Note: A robust implementation would check for node existence here.
+                } else { // type == "I"
+                    out_var.type = OutputVariable::CURRENT;
+                    if (!graph->findElement(name)) {
+                        std::cout << "Error: Component " << name << " not found in circuit" << std::endl;
+                        return;
+                    }
+                }
+                out_var.name = name;
+                requested_vars.push_back(out_var);
+            } else {
+                std::cerr << "Error: Invalid variable format: " << var_token << std::endl;
+                return;
+            }
+        }
+
+        if (requested_vars.empty()) {
+            std::cerr << "Error: No output variables specified for print command." << std::endl;
+            return;
+        }
+
+        simRunner->runTransient(tstep, tstop, requested_vars);
+
+    } else {
+        std::cerr << "Error: Analysis type '" << analysis_type << "' not supported." << std::endl;
+    }
+}
 
 
 

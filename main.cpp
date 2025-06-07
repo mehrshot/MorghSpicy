@@ -8,7 +8,8 @@
 #include "Model/Graph.h"
 #include "Model/MNASolver.h"
 #include "Model/NodeManager.h"
-#include "Model/CommandParser.h"
+#include "Controller/CommandParser.h"
+#include "Controller/SimulationRunner.h"
 
 #include <eigen3/Eigen/Dense>
 
@@ -70,10 +71,15 @@ int main() {
     // mnaSolver.displayElementCurrents(circuitGraph);
     Graph graph;
     NodeManager nodeManager(&graph);
-    CommandParser parser(&graph, &nodeManager);
+    MNASolver mnaSolver;
+    SimulationRunner simRunner(&graph, &mnaSolver);
+    CommandParser parser(&graph, &nodeManager, &simRunner);
 
     std::string line;
     while (std::getline(std::cin, line)) {
+        if (line == "exit") {
+            break;
+        }
         parser.parseCommand(line);
     }
 

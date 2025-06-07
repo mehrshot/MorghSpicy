@@ -114,7 +114,7 @@ void MNASolver::constructMNAMatrix(const Graph& circuitGraph, double timestep_h,
         elem_ptr->stampMNA(A_matrix, b_vector, node_id_to_matrix_idx,
                            getExtraVariableStartIndex(), prev_solution, timestep_h);
     }
-    std::cout << "MNA Matrix constructed." << std::endl;
+//    std::cout << "MNA Matrix constructed." << std::endl;
 }
 
 Eigen::VectorXd MNASolver::solve() {
@@ -131,7 +131,7 @@ Eigen::VectorXd MNASolver::solve() {
     }
 
     solution_vector = A_matrix.lu().solve(b_vector);
-    std::cout << "MNA System solved." << std::endl;
+//    std::cout << "MNA System solved." << std::endl;
     return solution_vector;
 }
 
