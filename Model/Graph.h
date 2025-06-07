@@ -39,6 +39,47 @@ public:
         elements.clear();
     }
 
+    bool isConnected() const {
+        if (nodes.empty() || elements.empty()) {
+            return false; // An empty or element-less circuit is not considered validly connected
+        }
+
+        std::map<int, std::vector<int>> adj;
+        for (const auto* elem : elements) {
+            adj[elem->node1].push_back(elem->node2);
+            adj[elem->node2].push_back(elem->node1);
+        }
+
+        std::set<int> visited;
+        std::stack<int> stack;
+
+        stack.push(0);
+
+        while (!stack.empty()) {
+            int u = stack.top();
+            stack.pop();
+
+            if (visited.find(u) == visited.end()) {
+                visited.insert(u);
+                if (adj.count(u)) {
+                    for (int v : adj.at(u)) {
+                        if (visited.find(v) == visited.end()) {
+                            stack.push(v);
+                        }
+                    }
+                }
+            }
+        }
+
+        for (const auto& pair : adj) {
+            if (visited.find(pair.first) == visited.end()) {
+                return false; // A node was not reached, so the graph is disconnected
+            }
+        }
+
+        return true;
+    }
+
     // Add Node
     void addNode(Node* node) {
         nodes.push_back(node);

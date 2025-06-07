@@ -9,6 +9,11 @@
 SimulationRunner::SimulationRunner(Graph* g, MNASolver* solver) : graph(g), mnaSolver(solver) {}
 
 void SimulationRunner::runTransient(double tstep, double tstop, const std::vector<OutputVariable>& requested_vars) {
+    if (!graph->isConnected()) {
+        std::cerr << "Error: Circuit is disconnected or contains floating nodes." << std::endl;
+        return;
+    }
+
     mnaSolver->initializeMatrix(*graph);
 
     if (mnaSolver->getTotalUnknowns() == 0) {
@@ -112,6 +117,72 @@ double SimulationRunner::calculate_element_current(Element* elem, const Eigen::V
         case CURRENT_SOURCE:
             return elem->value;
         default:
-            return 0.0; // Should not happen for valid elements
+            return 0.0;
+    }
+}
+
+void SimulationRunner::runDCSweep(const std::string& sourceName, double start, double stop, double increment, const std::vector<OutputVariable>& requested_vars) {
+    if (!graph->isConnected()) {
+        std::cerr << "Error: Circuit is disconnected or contains floating nodes." << std::endl;
+        return;
+    }
+
+    Element* swept_element = graph->findElement(sourceName);
+    if (!swept_element) {
+        std::cerr << "Error: Source '" << sourceName << "' not found for DC sweep." << std::endl;
+        return;
+    }
+
+    mnaSolver->initializeMatrix(*graph);
+    if (mnaSolver->getTotalUnknowns() == 0) {
+        std::cerr << "Error: Simulation cannot run, the circuit is not correctly defined." << std::endl;
+        return;
+    }
+
+    std::cout << "Running DC Sweep Analysis..." << std::endl;
+
+    std::cout << std::left << std::setw(15) << sourceName;
+    for (const auto& var : requested_vars) {
+        std::string header = (var.type == OutputVariable::VOLTAGE ? "V(" : "I(") + var.name + ")";
+        std::cout << std::setw(15) << header;
+    }
+    std::cout << std::endl;
+
+    Eigen::VectorXd prev_solution_dc(mnaSolver->getTotalUnknowns());
+    prev_solution_dc.setZero();
+    // Use a large timestep to simulate DC conditions (C=open, L=short)
+    double large_timestep_for_dc = 1e12;
+
+    for (double current_val = start; current_val <= stop; current_val += increment) {
+        swept_element->setValue(current_val);
+
+        mnaSolver->constructMNAMatrix(*graph, large_timestep_for_dc, prev_solution_dc);
+        Eigen::VectorXd current_solution = mnaSolver->solve();
+
+        if (current_solution.size() == 0) {
+            std::cerr << "Warning: Solution failed for " << sourceName << " = " << current_val << ". Sweep stopped." << std::endl;
+            break;
+        }
+
+        std::cout << std::left << std::fixed << std::setprecision(6);
+        std::cout << std::setw(15) << current_val;
+
+        for (const auto& var : requested_vars) {
+            double result = 0.0;
+            if (var.type == OutputVariable::VOLTAGE) {
+                int node_id = -1;
+                for(const auto& node : graph->getNodes()){ if(node->getName() == var.name){ node_id = node->getId(); break; } }
+                if (node_id != -1 && mnaSolver->getNodeToMatrixIdxMap().count(node_id)) {
+                    result = current_solution(mnaSolver->getNodeToMatrixIdxMap().at(node_id));
+                }
+            } else { // CURRENT
+                Element* elem = graph->findElement(var.name);
+                if (elem) {
+                    result = calculate_element_current(elem, current_solution, prev_solution_dc, large_timestep_for_dc);
+                }
+            }
+            std::cout << std::setw(15) << result;
+        }
+        std::cout << std::endl;
     }
 }

@@ -175,7 +175,6 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
     iss >> analysis_type;
 
     if (analysis_type == "TRAN") {
-        // --- START OF CORRECTION ---
         std::string tstep_str, tstop_str;
         if (!(iss >> tstep_str >> tstop_str)) {
             std::cerr << "Error: Syntax error. Usage: print TRAN <tstep> <tstop> <var1> <var2> ..." << std::endl;
@@ -189,11 +188,10 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
             std::cerr << "Error: Invalid time parameters for TRAN analysis." << std::endl;
             return;
         }
-        // --- END OF CORRECTION ---
 
         std::vector<OutputVariable> requested_vars;
         std::string var_token;
-        std::regex var_regex(R"((V|I)\((.+)\))"); // Regex to capture V(node) or I(element)
+        std::regex var_regex(R"((V|I)\((.+)\))");
 
         while (iss >> var_token) {
             std::smatch matches;
@@ -227,7 +225,49 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
 
         simRunner->runTransient(tstep, tstop, requested_vars);
 
-    } else {
+    }
+    else if (analysis_type == "DC") {
+        std::string sourceName, start_str, end_str, inc_str;
+        if (!(iss >> sourceName >> start_str >> end_str >> inc_str)) {
+            std::cerr << "Error: Syntax error. Usage: print DC <SourceName> <Start> <End> <Increment> <var1>..." << std::endl;
+            return;
+        }
+
+        double start_val = parseValueWithPrefix(start_str);
+        double end_val = parseValueWithPrefix(end_str);
+        double inc_val = parseValueWithPrefix(inc_str);
+
+        if (inc_val <= 0) {
+            std::cerr << "Error: Increment for DC sweep must be positive." << std::endl;
+            return;
+        }
+
+        std::vector<OutputVariable> requested_vars;
+        std::string var_token;
+        std::regex var_regex(R"((V|I)\((.+)\))");
+
+        while (iss >> var_token) {
+            std::smatch matches;
+            if (std::regex_match(var_token, matches, var_regex)) {
+                OutputVariable out_var;
+                out_var.type = (matches[1].str() == "V") ? OutputVariable::VOLTAGE : OutputVariable::CURRENT;
+                out_var.name = matches[2].str();
+                requested_vars.push_back(out_var);
+            } else {
+                std::cerr << "Error: Invalid variable format: " << var_token << std::endl;
+                return;
+            }
+        }
+
+        if (requested_vars.empty()) {
+            std::cerr << "Error: No output variables specified for print command." << std::endl;
+            return;
+        }
+
+        simRunner->runDCSweep(sourceName, start_val, end_val, inc_val, requested_vars);
+
+    }
+    else {
         std::cerr << "Error: Analysis type '" << analysis_type << "' not supported." << std::endl;
     }
 }

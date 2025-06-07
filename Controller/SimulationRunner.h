@@ -28,8 +28,7 @@ public:
 
     void runTransient(double tstep, double tstop, const std::vector<OutputVariable>& requested_vars);
 
-    // Placeholder for DC Sweep, as described in the PDF as an optional analysis
-    // void runDCSweep(const std::string& sourceName, double start, double stop, double step, const std::vector<OutputVariable>& requested_vars);
+    void runDCSweep(const std::string& sourceName, double start, double stop, double increment, const std::vector<OutputVariable>& requested_vars);
 
 private:
     double calculate_element_current(Element* elem, const Eigen::VectorXd& solution_vector, const Eigen::VectorXd& prev_solution, double h);
