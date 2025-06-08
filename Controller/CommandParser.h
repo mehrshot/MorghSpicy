@@ -16,6 +16,7 @@ private:
     SimulationRunner* simRunner;
 
     void handlePrintCommand(std::istringstream& iss);
+    void handleShowSchematics();
 
 public:
     CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner);

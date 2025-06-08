@@ -7,6 +7,9 @@
 #include <unordered_set>
 #include <regex>
 #include <fstream>
+#include <string>
+#include <vector>
+#include <filesystem>
 CommandParser::CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner)
         : graph(g), nodeManager(nm), simRunner(runner) {}
 
@@ -195,7 +198,17 @@ void CommandParser::parseCommand(const std::string& line) {
         }
         std::cout << std::flush;
         std::cout << "Finished loading from file." << std::endl;
-    }else if (cmd == "print") {
+    }
+    else if (cmd == "show") {
+        std::string token1, token2;
+        if (iss >> token1 >> token2 && token1 == "existing" && token2 == "schematics") {
+            handleShowSchematics();
+        } else {
+            std::cerr << "Error: Unknown command. Did you mean 'show existing schematics'?" << std::endl;
+        }
+
+    }
+    else if (cmd == "print") {
         handlePrintCommand(iss);
     } else {
         std::cerr << "Error: Unknown command: " << cmd << std::endl;
@@ -278,5 +291,60 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
         simRunner->runDCSweep(sourceName, start_val, end_val, inc_val, requested_vars);
     } else {
         std::cerr << "Error: Analysis type '" << analysis_type << "' not supported." << std::endl;
+    }
+}
+void CommandParser::handleShowSchematics() {
+    while (true) {
+        std::vector<std::filesystem::path> schematics;
+        std::cout << "\n-choose existing schematic:" << std::endl;
+
+        int i = 1;
+        try {
+            for (const auto& entry : std::filesystem::directory_iterator("schematics")) { // Or "." if you used solution 1
+                if (entry.path().filename() == "CMakeCache.txt") continue;
+
+                if (entry.path().extension() == ".txt") {
+                    schematics.push_back(entry.path());
+                    std::cout << i++ << "-" << entry.path().stem().string() << std::endl;
+                }
+            }
+        } catch (const std::filesystem::filesystem_error& e) {
+            std::cerr << "Error accessing directory: " << e.what() << std::endl;
+            return;
+        }
+
+        if (schematics.empty()) {
+            std::cout << "No schematic files (.txt) found." << std::endl;
+        }
+
+        std::cout << ">>> ";
+        std::string choice;
+        if (!std::getline(std::cin, choice)) {
+            break;
+        }
+
+        if (choice == "return") {
+            break;
+        }
+
+        int choice_num;
+        try {
+            choice_num = std::stoi(choice);
+            if (choice_num < 1 || choice_num > schematics.size()) {
+                std::cerr << "-Error: Inappropriate input" << std::endl;
+                continue;
+            }
+        } catch (...) {
+            std::cerr << "-Error: Inappropriate input" << std::endl;
+            continue;
+        }
+        std::filesystem::path chosen_path = schematics[choice_num - 1];
+        std::ifstream infile(chosen_path);
+        if (!infile.is_open()) {
+            std::cerr << "Error: Could not open file " << chosen_path << std::endl;
+            continue;
+        }
+        std::cout << "\n" << chosen_path.stem().string() << ":" << std::endl;
+        std::cout << infile.rdbuf() << std::endl;
     }
 }
