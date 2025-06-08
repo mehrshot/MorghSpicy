@@ -11,17 +11,18 @@
 
 CommandParser::CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner)
         : graph(g), nodeManager(nm), simRunner(runner) {}
+
+// Helper function to check if a string is a valid number.
 bool isNumber(const std::string& s) {
     std::regex pattern(R"(^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$)");
     return std::regex_match(s, pattern);
 }
 
-// برای ساپورت کردن کیلو و مگا و نانو واینا و نماد علمی
+// Parses a string value that may have a metric prefix (k, m, u, etc.).
 double parseValueWithPrefix(const std::string& str) {
     try {
         double factor = 1.0;
         std::string numPart = str;
-
         char last = tolower(str.back());
 
         switch (last) {
@@ -37,20 +38,20 @@ double parseValueWithPrefix(const std::string& str) {
                 if (isNumber(str)) return std::stod(str);
                 break;
         }
-
         return std::stod(numPart) * factor;
     } catch (...) {
-        return -1e99; // خطا
+        return -1e99; // Return an error indicator
     }
 }
 
+// Main function to parse and execute commands from user input.
 void CommandParser::parseCommand(const std::string& line) {
     std::istringstream iss(line);
     std::string cmd;
     iss >> cmd;
 
     if (cmd == "add") {
-        std::string name, n1_str, n2_str, extra;
+        std::string name, n1_str, n2_str;
         if (!(iss >> name)) {
             std::cerr << "Error: Syntax error\n";
             return;
@@ -58,25 +59,24 @@ void CommandParser::parseCommand(const std::string& line) {
 
         char type = name[0];
 
-        // 📍 پشتیبانی از GND: add GND <node>
+        // Handle GND assignment as a special case.
         if (name == "GND") {
             if (!(iss >> n1_str)) {
                 std::cerr << "Error: Syntax error\n";
                 return;
             }
-            int gnd_id = 0;
-            nodeManager->assignNodeAsGND(n1_str); // باید این متد رو در NodeManager بنویسی
+            nodeManager->assignNodeAsGND(n1_str);
             std::cout << "Node " << n1_str << " assigned as GND\n";
             return;
         }
 
-        // بررسی حروف بزرگ بودن
+        // Element names must start with an uppercase letter.
         if (!isupper(type)) {
             std::cerr << "Error: Element " << name << " not found in library\n";
             return;
         }
 
-        // بررسی تکراری بودن نام
+        // Check for duplicate element names.
         for (Element* e : graph->getElements()) {
             if (e->name == name) {
                 std::cerr << "Error: " << name << " already exists in the circuit\n";
@@ -89,38 +89,7 @@ void CommandParser::parseCommand(const std::string& line) {
             return;
         }
 
-        if (type == 'D') {
-            std::string model;
-            if (!(iss >> model)) {
-                std::cerr << "Error: Syntax error\n";
-                return;
-            }
-
-
-            static std::unordered_set<std::string> validModels = {"D", "Z"};
-            if (!validModels.count(model)) {
-                std::cerr << "Error: Model " << model << " not found in library\n";
-                return;
-            }
-
-            for (Element* e : graph->getElements()) {
-                if (e->name == name) {
-                    std::cerr << "Error: diode " << name << " already exists in the circuit\n";
-                    return;
-                }
-            }
-
-            int n1 = nodeManager->getOrCreateNodeId(n1_str);
-            int n2 = nodeManager->getOrCreateNodeId(n2_str);
-
-            Element* d = new Diode(name, n1, n2, model);
-            graph->addElement(d);
-            std::cout << "Added diode: " << name << std::endl;
-            return;
-        }
-
-
-        // سایر المان‌ها: مقدار باید باشه
+        // All standard elements require a value.
         std::string value_str;
         if (!(iss >> value_str)) {
             std::cerr << "Error: Syntax error (missing value)\n";
@@ -135,7 +104,6 @@ void CommandParser::parseCommand(const std::string& line) {
             else if (type == 'L') typeName = "Inductance";
             else if (type == 'V') typeName = "Voltage";
             else if (type == 'I') typeName = "Current";
-
             std::cerr << "Error: " << typeName << " cannot be zero or negative\n";
             return;
         }
@@ -167,19 +135,30 @@ void CommandParser::parseCommand(const std::string& line) {
         if (!graph->removeElementByName(name)) {
             std::cerr << "Error: Cannot delete " << name << "; component not found\n";
         }
-
     } else if (cmd == "list") {
-        graph->desplayGraph();
-
-    }
-    else if (cmd == "print") {
+        std::string type_filter;
+        if (iss >> type_filter) {
+            graph->displayElementsByType(type_filter);
+        } else {
+            graph->desplayGraph();
+        }
+    } else if (cmd == ".nodes") {
+        nodeManager->displayNodes();
+    } else if (cmd == "rename") {
+        std::string sub_cmd, old_name, new_name;
+        if (!(iss >> sub_cmd >> old_name >> new_name) || sub_cmd != "node") {
+            std::cerr << "ERROR: Invalid syntax. correct format: rename node <old_name> <new_name>" << std::endl;
+            return;
+        }
+        nodeManager->renameNode(old_name, new_name);
+    } else if (cmd == "print") {
         handlePrintCommand(iss);
-    }
-    else {
+    } else {
         std::cerr << "Error: Unknown command: " << cmd << std::endl;
     }
 }
 
+// Handles the 'print' command for different analysis types.
 void CommandParser::handlePrintCommand(std::istringstream& iss) {
     std::string analysis_type;
     iss >> analysis_type;
@@ -212,7 +191,6 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
                 OutputVariable out_var;
                 if (type == "V") {
                     out_var.type = OutputVariable::VOLTAGE;
-                    // Note: A robust implementation would check for node existence here.
                 } else { // type == "I"
                     out_var.type = OutputVariable::CURRENT;
                     if (!graph->findElement(name)) {
@@ -235,8 +213,7 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
 
         simRunner->runTransient(tstep, tstop, requested_vars);
 
-    }
-    else if (analysis_type == "DC") {
+    } else if (analysis_type == "DC") {
         std::string sourceName, start_str, end_str, inc_str;
         if (!(iss >> sourceName >> start_str >> end_str >> inc_str)) {
             std::cerr << "Error: Syntax error. Usage: print DC <SourceName> <Start> <End> <Increment> <var1>..." << std::endl;
@@ -276,11 +253,7 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
 
         simRunner->runDCSweep(sourceName, start_val, end_val, inc_val, requested_vars);
 
-    }
-    else {
+    } else {
         std::cerr << "Error: Analysis type '" << analysis_type << "' not supported." << std::endl;
     }
 }
-
-
-
