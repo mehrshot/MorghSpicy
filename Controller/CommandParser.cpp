@@ -89,26 +89,36 @@ void CommandParser::parseCommand(const std::string& line) {
             return;
         }
 
-        // // ✅ دیود
-        // if (type == 'D') {
-        //     std::string model;
-        //     if (!(iss >> model)) {
-        //         std::cerr << "Error: Syntax error\n";
-        //         return;
-        //     }
-        //
-        //     // مدل مجاز؟ فقط D و Z فعلاً
-        //     static std::unordered_set<std::string> validModels = {"D", "Z"};
-        //     if (!validModels.count(model)) {
-        //         std::cerr << "Error: Model " << model << " not found in library\n";
-        //         return;
-        //     }
-        //
-        //     std::cout << "Info: Diode " << name << " between " << n1_str << " and " << n2_str
-        //               << " with model " << model << " added (placeholder)\n";
-        //     // اگر بعداً کلاس Diode رو ساختی، اینجا new Diode(...) بزن
-        //     return;
-        // }
+        if (type == 'D') {
+            std::string model;
+            if (!(iss >> model)) {
+                std::cerr << "Error: Syntax error\n";
+                return;
+            }
+
+
+            static std::unordered_set<std::string> validModels = {"D", "Z"};
+            if (!validModels.count(model)) {
+                std::cerr << "Error: Model " << model << " not found in library\n";
+                return;
+            }
+
+            for (Element* e : graph->getElements()) {
+                if (e->name == name) {
+                    std::cerr << "Error: diode " << name << " already exists in the circuit\n";
+                    return;
+                }
+            }
+
+            int n1 = nodeManager->getOrCreateNodeId(n1_str);
+            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+
+            Element* d = new Diode(name, n1, n2, model);
+            graph->addElement(d);
+            std::cout << "Added diode: " << name << std::endl;
+            return;
+        }
+
 
         // سایر المان‌ها: مقدار باید باشه
         std::string value_str;

@@ -116,4 +116,33 @@ public:
                   double h) override;
 };
 
+// تغییرات جدید برای اضافه کردن دیود
+// کامنت کردم بعدا بتونیم حذف و اضافه کنیم
+class Diode : public Element {
+public:
+    std::string model;
+    double IS = 1e-14;
+    double n = 1.0;
+    double VT = 0.0258;
+    double prev_vd = 0.7;
+
+    Diode(std::string n, int n1, int n2, std::string m)
+        : Element(n, n1, n2, 0.0, DIODE), model(m) {}
+
+    void display() override {
+        std::cout << "Diode " << name << ": Model = " << model
+                  << ", Nodes: " << node1 << " - " << node2 << std::endl;
+    }
+
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
+                  const std::map<int, int>& node_id_to_matrix_idx,
+                  int extra_var_start_idx,
+                  const Eigen::VectorXd& prev_solution,
+                  double h) override;
+};
+
+
+
+
+
 #endif // MORGHSPICY_ELEMENTS_H

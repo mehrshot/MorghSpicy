@@ -133,3 +133,34 @@ void CurrentSource::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
     if (n1_idx != -1) b(n1_idx) -= value;
     if (n2_idx != -1) b(n2_idx) += value;
 }
+void Diode::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
+                     const std::map<int, int>& node_id_to_matrix_idx,
+                     int extra_var_start_idx,
+                     const Eigen::VectorXd& prev_solution,
+                     double h) {
+    int n1_idx = get_matrix_idx(node1, node_id_to_matrix_idx);
+    int n2_idx = get_matrix_idx(node2, node_id_to_matrix_idx);
+
+    double v1 = (n1_idx != -1 && n1_idx < prev_solution.size()) ? prev_solution(n1_idx) : 0.0;
+    double v2 = (n2_idx != -1 && n2_idx < prev_solution.size()) ? prev_solution(n2_idx) : 0.0;
+    double vd = v1 - v2;
+    prev_vd = vd;
+
+    double exp_vd = std::exp(vd / (n * VT));
+    double id = IS * (exp_vd - 1);
+    double gd = IS / (n * VT) * exp_vd;
+    double ieq = id - gd * vd;
+
+    if (n1_idx != -1) {
+        A(n1_idx, n1_idx) += gd;
+        b(n1_idx) -= ieq;
+    }
+    if (n2_idx != -1) {
+        A(n2_idx, n2_idx) += gd;
+        b(n2_idx) += ieq;
+    }
+    if (n1_idx != -1 && n2_idx != -1) {
+        A(n1_idx, n2_idx) -= gd;
+        A(n2_idx, n1_idx) -= gd;
+    }
+}
