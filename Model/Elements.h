@@ -1,15 +1,14 @@
-//
-// Created by Mehrshad on 5/29/2025.
-//
-
 #ifndef MORGHSPICY_ELEMENTS_H
 #define MORGHSPICY_ELEMENTS_H
 
-#include <bits/stdc++.h>
+#include <string>
+#include <vector>
+#include <map>
+#include <iostream>
 #include <eigen3/Eigen/Dense>
-
 #include "ElementTypes.h"
 
+// Base class for all circuit elements
 class Element {
 public:
     std::string name;
@@ -17,22 +16,19 @@ public:
     double value;
     ElementType type;
 
+    // Flag for elements that add a new unknown (current) to the MNA system
     bool introducesExtraVariable = false;
-    // The index of this extra variable in the extra variables section of the MNA matrix
+    // The index of this element's extra variable in the MNA matrix
     int extraVariableIndex = -1;
 
-    // Constructor
     Element(std::string n, int n1, int n2, double v, ElementType t)
             : name(n), node1(n1), node2(n2), value(v), type(t) {}
     virtual ~Element() = default;
 
-    void setValue(double newValue) {
-        value = newValue;
-    }
-    double getValue() const {
-        return value;
-    }
+    void setValue(double newValue) { value = newValue; }
+    double getValue() const { return value; }
 
+    // Pure virtual function for stamping the element's contribution to the MNA matrices
     virtual void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                           const std::map<int, int>& node_id_to_matrix_idx,
                           int extra_var_start_idx,
@@ -42,98 +38,71 @@ public:
     virtual void display() = 0;
 };
 
-// Derived class for Resistor
 class Resistor : public Element {
 public:
     Resistor(std::string n, int n1, int n2, double v) : Element(n, n1, n2, v, RESISTOR) {}
-    void display() override {
-        std::cout << "Resistor " << name << ": " << value << " Ohms, Nodes: " << node1 << " - " << node2 << std::endl;
-    }
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                  const std::map<int, int>& node_id_to_matrix_idx,
-                  int extra_var_start_idx,
-                  const Eigen::VectorXd& prev_solution,
-                  double h) override; // Declaration of stampMNA
+    void display() override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const std::map<int, int>& node_id_to_matrix_idx, int extra_var_start_idx, const Eigen::VectorXd& prev_solution, double h) override;
 };
 
-// Derived class for Capacitor
 class Capacitor : public Element {
 public:
     Capacitor(std::string n, int n1, int n2, double v) : Element(n, n1, n2, v, CAPACITOR) {}
-    void display() override {
-        std::cout << "Capacitor " << name << ": " << value << " F, Nodes: " << node1 << " - " << node2 << std::endl;
-    }
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                  const std::map<int, int>& node_id_to_matrix_idx,
-                  int extra_var_start_idx,
-                  const Eigen::VectorXd& prev_solution,
-                  double h) override; // Declaration of stampMNA
+    void display() override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const std::map<int, int>& node_id_to_matrix_idx, int extra_var_start_idx, const Eigen::VectorXd& prev_solution, double h) override;
 };
 
-// Derived class for Inductor
 class Inductor : public Element {
 public:
     Inductor(std::string n, int n1, int n2, double v) : Element(n, n1, n2, v, INDUCTOR) {
-        introducesExtraVariable = true; // Inductor current is an extra unknown in MNA
+        introducesExtraVariable = true;
     }
-    void display() override {
-        std::cout << "Inductor " << name << ": " << value << " H, Nodes: " << node1 << " - " << node2 << std::endl;
-    }
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                  const std::map<int, int>& node_id_to_matrix_idx,
-                  int extra_var_start_idx,
-                  const Eigen::VectorXd& prev_solution,
-                  double h) override;
+    void display() override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const std::map<int, int>& node_id_to_matrix_idx, int extra_var_start_idx, const Eigen::VectorXd& prev_solution, double h) override;
 };
 
-// Derived class for VoltageSource
 class VoltageSource : public Element {
 public:
     VoltageSource(std::string n, int n1, int n2, double v) : Element(n, n1, n2, v, VOLTAGE_SOURCE) {
-        introducesExtraVariable = true; // Voltage source current is an extra unknown in MNA
+        introducesExtraVariable = true;
     }
-    void display() override {
-        std::cout << "Voltage Source " << name << ": " << value << " V, Nodes: " << node1 << " - " << node2 << std::endl;
-    }
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                  const std::map<int, int>& node_id_to_matrix_idx,
-                  int extra_var_start_idx,
-                  const Eigen::VectorXd& prev_solution,
-                  double h) override;
+    void display() override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const std::map<int, int>& node_id_to_matrix_idx, int extra_var_start_idx, const Eigen::VectorXd& prev_solution, double h) override;
 };
 
-// Derived class for CurrentSource
 class CurrentSource : public Element {
 public:
     CurrentSource(std::string n, int n1, int n2, double v) : Element(n, n1, n2, v, CURRENT_SOURCE) {}
-    void display() override {
-        std::cout << "Current Source " << name << ": " << value << " A, Nodes: " << node1 << " - " << node2 << std::endl;
-    }
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                  const std::map<int, int>& node_id_to_matrix_idx,
-                  int extra_var_start_idx,
-                  const Eigen::VectorXd& prev_solution,
-                  double h) override;
+    void display() override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const std::map<int, int>& node_id_to_matrix_idx, int extra_var_start_idx, const Eigen::VectorXd& prev_solution, double h) override;
 };
 
-// تغییرات جدید برای اضافه کردن دیود
-// کامنت کردم بعدا بتونیم حذف و اضافه کنیم
 class Diode : public Element {
 public:
     std::string model;
-    double IS = 1e-14;
-    double n = 1.0;
-    double VT = 0.0258;
-    double prev_vd = 0.7;
 
-    Diode(std::string n, int n1, int n2, std::string m)
-        : Element(n, n1, n2, 0.0, DIODE), model(m) {}
+    // --- Model Parameters ---
+    double Is; // Saturation Current
+    double n;  // Ideality Factor
+    double Vt; // Thermal Voltage
 
-    void display() override {
-        std::cout << "Diode " << name << ": Model = " << model
-                  << ", Nodes: " << node1 << " - " << node2 << std::endl;
+    // --- Zener Model Parameters ---
+    double Vz; // Zener Breakdown Voltage
+    double Iz; // Zener Current at Vz
+
+    Diode(std::string name, int n1, int n2, std::string m)
+            : Element(name, n1, n2, 0.0, DIODE), model(m) {
+        // Initialize model parameters with common default values
+        Is = 1e-14;
+        n = 1.0;
+        Vt = 0.02585; // at room temperature
+
+        // Default Zener voltage
+        Vz = 5.1;
+        Iz = 0.0;
     }
 
+    void display() override;
     void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                   const std::map<int, int>& node_id_to_matrix_idx,
                   int extra_var_start_idx,
@@ -141,8 +110,4 @@ public:
                   double h) override;
 };
 
-
-
-
-
-#endif // MORGHSPICY_ELEMENTS_H
+#endif //MORGHSPICY_ELEMENTS_H

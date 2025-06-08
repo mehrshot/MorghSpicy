@@ -5,6 +5,8 @@
 #ifndef MORGHSPICY_GRAPH_H
 #define MORGHSPICY_GRAPH_H
 
+#include <stack>
+
 #include "Common_Includes.h"
 #include "Node.h"
 #include "Edge.h"
@@ -130,12 +132,18 @@ public:
     bool removeElementByName(const std::string& name) {
         for (auto it = elements.begin(); it != elements.end(); ++it) {
             if ((*it)->name == name) {
-                delete *it;
-                std::cout << "Element '" << name << "' removed.\n";
-                return true;
+                delete *it; // 1. Deallocate the Element object's memory
+
+                // 2. Erase the pointer from the vector and get the next valid iterator
+                // This is the correct way to erase while iterating.
+                elements.erase(it);
+
+                std::cout << "Element '" << name << "' removed." << std::endl;
+                return true; // Exit the loop and function immediately
             }
         }
-        std::cerr << "Element '" << name << "' not found.\n";
+        // This message is now part of the calling function in CommandParser
+        // std::cerr << "Element '" << name << "' not found." << std::endl;
         return false;
     }
 
