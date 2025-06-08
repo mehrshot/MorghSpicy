@@ -1,4 +1,4 @@
-// Created by Ali on 6/6/2025.
+// Created by Ali-Er on 6/6/2025.
 
 #include "CommandParser.h"
 #include <sstream>
@@ -6,7 +6,7 @@
 #include <cctype>
 #include <unordered_set>
 #include <regex>
-
+#include <fstream>
 CommandParser::CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner)
         : graph(g), nodeManager(nm), simRunner(runner) {}
 
@@ -159,7 +159,43 @@ void CommandParser::parseCommand(const std::string& line) {
             return;
         }
         nodeManager->renameNode(old_name, new_name);
-    } else if (cmd == "print") {
+
+    }else if (cmd == "load") {
+        std::string filepath;
+        if (!(iss >> filepath)) {
+            std::cerr << "Error: Syntax error. Usage: load <file_path>" << std::endl;
+            return;
+        }
+
+        std::ifstream infile(filepath);
+        if (!infile.is_open()) {
+            std::cerr << "Error: Cannot open file: " << filepath << std::endl;
+            return;
+        }
+
+        std::cout << "Loading circuit from file: " << filepath << std::endl;
+
+        std::string file_line;
+        while (std::getline(infile, file_line)) {
+            if (file_line.empty() || file_line[0] == '*' || file_line[0] == '#') {
+                continue;
+            }
+
+            std::istringstream line_stream(file_line);
+            std::string type, name, n1, n2, val;
+
+            if (!(line_stream >> type >> name >> n1 >> n2 >> val)) {
+                std::cerr << "Error: Malformed line in file: " << file_line << std::endl;
+                continue;
+            }
+
+            std::string command_to_process = "add " + name + " " + n1 + " " + n2 + " " + val;
+
+            parseCommand(command_to_process);
+        }
+        std::cout << std::flush;
+        std::cout << "Finished loading from file." << std::endl;
+    }else if (cmd == "print") {
         handlePrintCommand(iss);
     } else {
         std::cerr << "Error: Unknown command: " << cmd << std::endl;
