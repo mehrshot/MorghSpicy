@@ -1,6 +1,4 @@
-//
 // Created by Ali on 6/6/2025.
-//
 
 #include "CommandParser.h"
 #include <sstream>
@@ -12,17 +10,17 @@
 CommandParser::CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner)
         : graph(g), nodeManager(nm), simRunner(runner) {}
 
-// Helper function to check if a string is a valid number.
 bool isNumber(const std::string& s) {
     std::regex pattern(R"(^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$)");
     return std::regex_match(s, pattern);
 }
 
-// Parses a string value that may have a metric prefix (k, m, u, etc.).
+// برای ساپورت کردن کیلو و مگا و نانو واینا و نماد علمی
 double parseValueWithPrefix(const std::string& str) {
     try {
         double factor = 1.0;
         std::string numPart = str;
+
         char last = tolower(str.back());
 
         switch (last) {
@@ -38,13 +36,13 @@ double parseValueWithPrefix(const std::string& str) {
                 if (isNumber(str)) return std::stod(str);
                 break;
         }
+
         return std::stod(numPart) * factor;
     } catch (...) {
-        return -1e99; // Return an error indicator
+        return -1e99; // خطا
     }
 }
 
-// Main function to parse and execute commands from user input.
 void CommandParser::parseCommand(const std::string& line) {
     std::istringstream iss(line);
     std::string cmd;
@@ -59,7 +57,7 @@ void CommandParser::parseCommand(const std::string& line) {
 
         char type = name[0];
 
-        // Handle GND assignment as a special case.
+        // 📍 پشتیبانی از GND: add GND <node>
         if (name == "GND") {
             if (!(iss >> n1_str)) {
                 std::cerr << "Error: Syntax error\n";
@@ -70,13 +68,11 @@ void CommandParser::parseCommand(const std::string& line) {
             return;
         }
 
-        // Element names must start with an uppercase letter.
         if (!isupper(type)) {
             std::cerr << "Error: Element " << name << " not found in library\n";
             return;
         }
 
-        // Check for duplicate element names.
         for (Element* e : graph->getElements()) {
             if (e->name == name) {
                 std::cerr << "Error: " << name << " already exists in the circuit\n";
@@ -89,28 +85,41 @@ void CommandParser::parseCommand(const std::string& line) {
             return;
         }
 
-        // All standard elements require a value.
+        if (type == 'D') {
+            std::string model;
+            if (!(iss >> model)) {
+                std::cerr << "Error: Syntax error\n";
+                return;
+            }
+            static std::unordered_set<std::string> validModels = {"D", "Z"};
+            if (!validModels.count(model)) {
+                std::cerr << "Error: Model " << model << " not found in library\n";
+                return;
+            }
+            int n1 = nodeManager->getOrCreateNodeId(n1_str);
+            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+            graph->addElement(new Diode(name, n1, n2, model));
+            std::cout << "Added diode: " << name << std::endl;
+            return;
+        }
+
         std::string value_str;
         if (!(iss >> value_str)) {
             std::cerr << "Error: Syntax error (missing value)\n";
             return;
         }
-
         double value = parseValueWithPrefix(value_str);
-        if (value <= 0 || value == -1e99) {
+        if ((type != 'V' && type != 'I' && value <= 0) || value == -1e99) {
             std::string typeName = "Value";
             if (type == 'R') typeName = "Resistance";
             else if (type == 'C') typeName = "Capacitance";
             else if (type == 'L') typeName = "Inductance";
-            else if (type == 'V') typeName = "Voltage";
-            else if (type == 'I') typeName = "Current";
             std::cerr << "Error: " << typeName << " cannot be zero or negative\n";
             return;
         }
 
         int n1 = nodeManager->getOrCreateNodeId(n1_str);
         int n2 = nodeManager->getOrCreateNodeId(n2_str);
-
         Element* e = nullptr;
         switch (type) {
             case 'R': e = new Resistor(name, n1, n2, value); break;
@@ -122,7 +131,6 @@ void CommandParser::parseCommand(const std::string& line) {
                 std::cerr << "Error: Element " << name << " not found in library\n";
                 return;
         }
-
         graph->addElement(e);
         std::cout << "Added element: " << name << std::endl;
 
@@ -158,7 +166,6 @@ void CommandParser::parseCommand(const std::string& line) {
     }
 }
 
-// Handles the 'print' command for different analysis types.
 void CommandParser::handlePrintCommand(std::istringstream& iss) {
     std::string analysis_type;
     iss >> analysis_type;
@@ -169,48 +176,35 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
             std::cerr << "Error: Syntax error. Usage: print TRAN <tstep> <tstop> <var1> <var2> ..." << std::endl;
             return;
         }
-
         double tstep = parseValueWithPrefix(tstep_str);
         double tstop = parseValueWithPrefix(tstop_str);
-
         if (tstep <= 0 || tstop <= 0 || tstep > tstop) {
             std::cerr << "Error: Invalid time parameters for TRAN analysis." << std::endl;
             return;
         }
-
         std::vector<OutputVariable> requested_vars;
         std::string var_token;
         std::regex var_regex(R"((V|I)\((.+)\))");
-
         while (iss >> var_token) {
             std::smatch matches;
             if (std::regex_match(var_token, matches, var_regex)) {
-                std::string type = matches[1].str();
-                std::string name = matches[2].str();
-
                 OutputVariable out_var;
-                if (type == "V") {
-                    out_var.type = OutputVariable::VOLTAGE;
-                } else { // type == "I"
-                    out_var.type = OutputVariable::CURRENT;
-                    if (!graph->findElement(name)) {
-                        std::cout << "Error: Component " << name << " not found in circuit" << std::endl;
-                        return;
-                    }
+                out_var.type = (matches[1].str() == "V") ? OutputVariable::VOLTAGE : OutputVariable::CURRENT;
+                out_var.name = matches[2].str();
+                if (out_var.type == OutputVariable::CURRENT && !graph->findElement(out_var.name)) {
+                    std::cout << "Error: Component " << out_var.name << " not found in circuit" << std::endl;
+                    return;
                 }
-                out_var.name = name;
                 requested_vars.push_back(out_var);
             } else {
                 std::cerr << "Error: Invalid variable format: " << var_token << std::endl;
                 return;
             }
         }
-
         if (requested_vars.empty()) {
             std::cerr << "Error: No output variables specified for print command." << std::endl;
             return;
         }
-
         simRunner->runTransient(tstep, tstop, requested_vars);
 
     } else if (analysis_type == "DC") {
@@ -219,20 +213,16 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
             std::cerr << "Error: Syntax error. Usage: print DC <SourceName> <Start> <End> <Increment> <var1>..." << std::endl;
             return;
         }
-
         double start_val = parseValueWithPrefix(start_str);
         double end_val = parseValueWithPrefix(end_str);
         double inc_val = parseValueWithPrefix(inc_str);
-
         if (inc_val <= 0) {
             std::cerr << "Error: Increment for DC sweep must be positive." << std::endl;
             return;
         }
-
         std::vector<OutputVariable> requested_vars;
         std::string var_token;
         std::regex var_regex(R"((V|I)\((.+)\))");
-
         while (iss >> var_token) {
             std::smatch matches;
             if (std::regex_match(var_token, matches, var_regex)) {
@@ -245,14 +235,11 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
                 return;
             }
         }
-
         if (requested_vars.empty()) {
             std::cerr << "Error: No output variables specified for print command." << std::endl;
             return;
         }
-
         simRunner->runDCSweep(sourceName, start_val, end_val, inc_val, requested_vars);
-
     } else {
         std::cerr << "Error: Analysis type '" << analysis_type << "' not supported." << std::endl;
     }
