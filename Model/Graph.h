@@ -38,6 +38,20 @@ public:
         }
         elements.clear();
     }
+    void displayElementsByType(const std::string& type_filter) {
+        std::cout << "Elements of type '" << type_filter << "' in the graph:\n";
+        char filter_char = toupper(type_filter[0]);
+        bool found = false;
+        for (const auto& elem : elements) {
+            if (toupper(elem->name[0]) == filter_char) {
+                elem->display();
+                found = true;
+            }
+        }
+        if (!found) {
+            std::cout << "No elements of type '" << type_filter << "' found.\n";
+        }
+    }
 
     bool isConnected() const {
         if (nodes.empty() || elements.empty()) {

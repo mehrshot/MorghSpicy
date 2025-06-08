@@ -1,7 +1,6 @@
 //
 // Created by Er on 6/6/2025.
 //
-
 #ifndef MORGHSPICY_NODENAMING_H
 #define MORGHSPICY_NODENAMING_H
 

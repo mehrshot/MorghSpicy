@@ -11,12 +11,12 @@
 
 CommandParser::CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner)
         : graph(g), nodeManager(nm), simRunner(runner) {}
+
 bool isNumber(const std::string& s) {
     std::regex pattern(R"(^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$)");
     return std::regex_match(s, pattern);
 }
 
-// برای ساپورت کردن کیلو و مگا و نانو واینا و نماد علمی
 double parseValueWithPrefix(const std::string& str) {
     try {
         double factor = 1.0;
@@ -40,7 +40,7 @@ double parseValueWithPrefix(const std::string& str) {
 
         return std::stod(numPart) * factor;
     } catch (...) {
-        return -1e99; // خطا
+        return -1e99; // Error indicator
     }
 }
 
@@ -58,25 +58,21 @@ void CommandParser::parseCommand(const std::string& line) {
 
         char type = name[0];
 
-        // 📍 پشتیبانی از GND: add GND <node>
         if (name == "GND") {
             if (!(iss >> n1_str)) {
                 std::cerr << "Error: Syntax error\n";
                 return;
             }
-            int gnd_id = 0;
-            nodeManager->assignNodeAsGND(n1_str); // باید این متد رو در NodeManager بنویسی
+            nodeManager->assignNodeAsGND(n1_str);
             std::cout << "Node " << n1_str << " assigned as GND\n";
             return;
         }
 
-        // بررسی حروف بزرگ بودن
         if (!isupper(type)) {
             std::cerr << "Error: Element " << name << " not found in library\n";
             return;
         }
 
-        // بررسی تکراری بودن نام
         for (Element* e : graph->getElements()) {
             if (e->name == name) {
                 std::cerr << "Error: " << name << " already exists in the circuit\n";
@@ -89,28 +85,6 @@ void CommandParser::parseCommand(const std::string& line) {
             return;
         }
 
-        // // ✅ دیود
-        // if (type == 'D') {
-        //     std::string model;
-        //     if (!(iss >> model)) {
-        //         std::cerr << "Error: Syntax error\n";
-        //         return;
-        //     }
-        //
-        //     // مدل مجاز؟ فقط D و Z فعلاً
-        //     static std::unordered_set<std::string> validModels = {"D", "Z"};
-        //     if (!validModels.count(model)) {
-        //         std::cerr << "Error: Model " << model << " not found in library\n";
-        //         return;
-        //     }
-        //
-        //     std::cout << "Info: Diode " << name << " between " << n1_str << " and " << n2_str
-        //               << " with model " << model << " added (placeholder)\n";
-        //     // اگر بعداً کلاس Diode رو ساختی، اینجا new Diode(...) بزن
-        //     return;
-        // }
-
-        // سایر المان‌ها: مقدار باید باشه
         std::string value_str;
         if (!(iss >> value_str)) {
             std::cerr << "Error: Syntax error (missing value)\n";
@@ -159,10 +133,25 @@ void CommandParser::parseCommand(const std::string& line) {
         }
 
     } else if (cmd == "list") {
-        graph->desplayGraph();
+        std::string type_filter;
+        if (iss >> type_filter) {
+            graph->displayElementsByType(type_filter);
+        } else {
+            graph->desplayGraph();
+        }
 
-    }
-    else if (cmd == "print") {
+    } else if (cmd == ".nodes") {
+        nodeManager->displayNodes();
+
+    } else if (cmd == "rename") {
+        std::string sub_cmd, old_name, new_name;
+        if (!(iss >> sub_cmd >> old_name >> new_name) || sub_cmd != "node") {
+            std::cerr << "ERROR: Invalid syntax. correct format: rename node <old_name> <new_name>" << std::endl;
+            return;
+        }
+        nodeManager->renameNode(old_name, new_name);
+
+    } else if (cmd == "print") {
         handlePrintCommand(iss);
     }
     else {
@@ -202,7 +191,6 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
                 OutputVariable out_var;
                 if (type == "V") {
                     out_var.type = OutputVariable::VOLTAGE;
-                    // Note: A robust implementation would check for node existence here.
                 } else { // type == "I"
                     out_var.type = OutputVariable::CURRENT;
                     if (!graph->findElement(name)) {
@@ -271,6 +259,3 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
         std::cerr << "Error: Analysis type '" << analysis_type << "' not supported." << std::endl;
     }
 }
-
-
-
