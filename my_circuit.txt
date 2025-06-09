@@ -1,0 +1,4 @@
+# My Simple RC Circuit
+V V1 N1 0 5
+R R1 N1 N2 1000
+C C1 N2 0 1u
