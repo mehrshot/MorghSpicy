@@ -47,6 +47,13 @@ void SimulationRunner::runTransient(double tstep, double tstop, const std::vecto
         Eigen::VectorXd final_solution;
         bool converged = false;
 
+        for (Element* e : graph->getElements()) {
+            if (e->type == SINUSOIDAL_SOURCE) {
+                dynamic_cast<SinusoidalSource*>(e)->updateTime(time);
+            }
+        }
+
+
         // Newton-Raphson inner loop for non-linear circuits
         for (int nr_iter = 0; nr_iter < MAX_NR_ITERATIONS; ++nr_iter) {
             mnaSolver->constructMNAMatrix(*graph, tstep, current_guess);

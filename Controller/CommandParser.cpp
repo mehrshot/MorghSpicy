@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+
 CommandParser::CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner)
         : graph(g), nodeManager(nm), simRunner(runner) {}
 
@@ -18,7 +19,6 @@ bool isNumber(const std::string& s) {
     return std::regex_match(s, pattern);
 }
 
-// برای ساپورت کردن کیلو و مگا و نانو واینا و نماد علمی
 double parseValueWithPrefix(const std::string& str) {
     try {
         double factor = 1.0;
@@ -52,7 +52,7 @@ void CommandParser::parseCommand(const std::string& line) {
     iss >> cmd;
 
     if (cmd == "add") {
-        std::string name, n1_str, n2_str;
+        std::string name;
         if (!(iss >> name)) {
             std::cerr << "Error: Syntax error\n";
             return;
@@ -60,19 +60,14 @@ void CommandParser::parseCommand(const std::string& line) {
 
         char type = name[0];
 
-        // 📍 پشتیبانی از GND: add GND <node>
         if (name == "GND") {
-            if (!(iss >> n1_str)) {
+            std::string node;
+            if (!(iss >> node)) {
                 std::cerr << "Error: Syntax error\n";
                 return;
             }
-            nodeManager->assignNodeAsGND(n1_str);
-            std::cout << "Node " << n1_str << " assigned as GND\n";
-            return;
-        }
-
-        if (!isupper(type)) {
-            std::cerr << "Error: Element " << name << " not found in library\n";
+            nodeManager->assignNodeAsGND(node);
+            std::cout << "Node " << node << " assigned as GND\n";
             return;
         }
 
@@ -83,6 +78,7 @@ void CommandParser::parseCommand(const std::string& line) {
             }
         }
 
+        std::string n1_str, n2_str;
         if (!(iss >> n1_str >> n2_str)) {
             std::cerr << "Error: Syntax error\n";
             return;
@@ -106,11 +102,88 @@ void CommandParser::parseCommand(const std::string& line) {
             return;
         }
 
+        if (type == 'G' || type == 'E') {
+            std::string c1_str, c2_str, gain_str;
+            if (!(iss >> c1_str >> c2_str >> gain_str)) {
+                std::cerr << "Error: Syntax error for VCCS/VCVS\n";
+                return;
+            }
+            double gain = parseValueWithPrefix(gain_str);
+            if (gain == -1e99) {
+                std::cerr << "Error: Invalid gain value\n";
+                return;
+            }
+            int n1 = nodeManager->getOrCreateNodeId(n1_str);
+            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+            int c1 = nodeManager->getOrCreateNodeId(c1_str);
+            int c2 = nodeManager->getOrCreateNodeId(c2_str);
+            Element* e = nullptr;
+            if (type == 'G') {
+                e = new vccs(name, n1, n2, c1, c2, gain);
+            } else {
+                e = new vcvs(name, n1, n2, c1, c2, gain);
+            }
+            graph->addElement(e);
+            std::cout << "Added element: " << name << std::endl;
+            return;
+        }
+
+        if (type == 'F' || type == 'H') {
+            std::string ctrl_name, gain_str;
+            if (!(iss >> ctrl_name >> gain_str)) {
+                std::cerr << "Error: Syntax error for CCCS/CCVS\n";
+                return;
+            }
+            double gain = parseValueWithPrefix(gain_str);
+            if (gain == -1e99) {
+                std::cerr << "Error: Invalid gain value\n";
+                return;
+            }
+            int n1 = nodeManager->getOrCreateNodeId(n1_str);
+            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+            Element* e = nullptr;
+            if (type == 'F') {
+                e = new cccs(name, n1, n2, ctrl_name, gain);
+            } else {
+                e = new ccvs(name, n1, n2, ctrl_name, gain);
+            }
+            graph->addElement(e);
+            std::cout << "Added element: " << name << std::endl;
+            return;
+        }
+        if (type == 'S') { // Sinusoidal source
+            std::string voffset_str, vamp_str, freq_str, phase_str;
+            if (!(iss >> voffset_str >> vamp_str >> freq_str)) {
+                std::cerr << "Error: Syntax error for Sinusoidal Source. Usage: add Sname node1 node2 Voffset Vamp Freq [Phase]" << std::endl;
+                return;
+            }
+
+            double voffset = parseValueWithPrefix(voffset_str);
+            double vamp = parseValueWithPrefix(vamp_str);
+            double freq = parseValueWithPrefix(freq_str);
+            double phase = 0.0;
+
+            std::string optional;
+            if (iss >> optional) {
+                phase = parseValueWithPrefix(optional);
+            }
+
+            int n1 = nodeManager->getOrCreateNodeId(n1_str);
+            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+
+            Element* e = new SinusoidalSource(name, n1, n2, voffset, vamp, freq, phase);
+            graph->addElement(e);
+            std::cout << "Added sinusoidal source: " << name << std::endl;
+            return;
+        }
+
+
         std::string value_str;
         if (!(iss >> value_str)) {
             std::cerr << "Error: Syntax error (missing value)\n";
             return;
         }
+
         double value = parseValueWithPrefix(value_str);
         if ((type != 'V' && type != 'I' && value <= 0) || value == -1e99) {
             std::string typeName = "Value";
@@ -210,7 +283,8 @@ void CommandParser::parseCommand(const std::string& line) {
     }
     else if (cmd == "print") {
         handlePrintCommand(iss);
-    } else {
+    }
+    else {
         std::cerr << "Error: Unknown command: " << cmd << std::endl;
     }
 }

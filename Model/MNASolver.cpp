@@ -64,6 +64,13 @@ void MNASolver::initializeMatrix(const Graph& circuitGraph) {
     num_inductors = 0;
 
     const std::vector<Element*>& all_elements_in_graph = circuitGraph.getElements();
+    for (Element* e : all_elements_in_graph) {
+        if (e->type == CCCS) {
+            dynamic_cast<cccs*>(e)->linkControlSource(all_elements_in_graph);
+        } else if (e->type == CCVS) {
+            dynamic_cast<ccvs*>(e)->linkControlSource(all_elements_in_graph);
+        }
+    }
     for (Element* elem_ptr : all_elements_in_graph) {
         if (elem_ptr->type == VOLTAGE_SOURCE) {
             num_voltage_sources++;

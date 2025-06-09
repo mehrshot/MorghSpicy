@@ -184,6 +184,103 @@ void Diode::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
     if (n2_idx != -1) b(n2_idx) += Ieq;
 }
 
+void vccs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
+                    const std::map<int, int>& node_id_to_matrix_idx,
+                    int extra_var_start_idx,
+                    const Eigen::VectorXd& prev_solution,
+                    double h) {
+    int n1 = get_matrix_idx(node1, node_id_to_matrix_idx);
+    int n2 = get_matrix_idx(node2, node_id_to_matrix_idx);
+    int c1 = get_matrix_idx(ctrl_node1, node_id_to_matrix_idx);
+    int c2 = get_matrix_idx(ctrl_node2, node_id_to_matrix_idx);
+
+    if (n1 != -1 && c1 != -1) A(n1, c1) += value;
+    if (n1 != -1 && c2 != -1) A(n1, c2) -= value;
+    if (n2 != -1 && c1 != -1) A(n2, c1) -= value;
+    if (n2 != -1 && c2 != -1) A(n2, c2) += value;
+}
+
+
+void vcvs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
+                    const std::map<int, int>& node_id_to_matrix_idx,
+                    int extra_var_start_idx,
+                    const Eigen::VectorXd& prev_solution,
+                    double h) {
+    int n1 = get_matrix_idx(node1, node_id_to_matrix_idx);
+    int n2 = get_matrix_idx(node2, node_id_to_matrix_idx);
+    int c1 = get_matrix_idx(ctrl_node1, node_id_to_matrix_idx);
+    int c2 = get_matrix_idx(ctrl_node2, node_id_to_matrix_idx);
+    int idx = extra_var_start_idx + extraVariableIndex;
+
+    if (n1 != -1) A(n1, idx) += 1;
+    if (n2 != -1) A(n2, idx) -= 1;
+
+    if (idx != -1 && n1 != -1) A(idx, n1) += 1;
+    if (idx != -1 && n2 != -1) A(idx, n2) -= 1;
+    if (idx != -1 && c1 != -1) A(idx, c1) -= value;
+    if (idx != -1 && c2 != -1) A(idx, c2) += value;
+}
+
+
+void cccs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
+                    const std::map<int, int>& node_id_to_matrix_idx,
+                    int extra_var_start_idx,
+                    const Eigen::VectorXd& prev_solution,
+                    double h) {
+    if (!controlling_elem) return;
+    int ctrl_idx = extra_var_start_idx + controlling_elem->extraVariableIndex;
+
+    int n1 = get_matrix_idx(node1, node_id_to_matrix_idx);
+    int n2 = get_matrix_idx(node2, node_id_to_matrix_idx);
+
+    if (n1 != -1) A(n1, ctrl_idx) += value;
+    if (n2 != -1) A(n2, ctrl_idx) -= value;
+}
+
+void cccs::linkControlSource(const std::vector<Element*>& all) {
+    for (Element* e : all) {
+        if (e->name == controlling_name && e->introducesExtraVariable) {
+            controlling_elem = e;
+            break;
+        }
+    }
+}
+
+
+
+void ccvs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
+                    const std::map<int, int>& node_id_to_matrix_idx,
+                    int extra_var_start_idx,
+                    const Eigen::VectorXd& prev_solution,
+                    double h) {
+    if (!controlling_elem) return;
+    int idx = extra_var_start_idx + extraVariableIndex;
+    int ctrl_idx = extra_var_start_idx + controlling_elem->extraVariableIndex;
+
+    int n1 = get_matrix_idx(node1, node_id_to_matrix_idx);
+    int n2 = get_matrix_idx(node2, node_id_to_matrix_idx);
+
+    if (n1 != -1) A(n1, idx) += 1;
+    if (n2 != -1) A(n2, idx) -= 1;
+
+    if (idx != -1 && n1 != -1) A(idx, n1) += 1;
+    if (idx != -1 && n2 != -1) A(idx, n2) -= 1;
+    if (idx != -1 && ctrl_idx != -1) A(idx, ctrl_idx) -= value;
+}
+
+void ccvs::linkControlSource(const std::vector<Element*>& all) {
+    for (Element* e : all) {
+        if (e->name == controlling_name && e->introducesExtraVariable) {
+            controlling_elem = e;
+            break;
+        }
+    }
+}
+
+
+
+
+
 void Resistor::display() {
     std::cout << "Resistor " << name << ": " << value << " Ohms, Nodes: " << node1 << " - " << node2 << std::endl;
 }

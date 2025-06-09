@@ -10,6 +10,11 @@ enum ElementType {
     INDUCTOR,
     VOLTAGE_SOURCE,
     CURRENT_SOURCE,
-    DIODE
+    DIODE,
+    VCCS,
+    VCVS,
+    CCCS,
+    CCVS,
+    SINUSOIDAL_SOURCE
 };
 #endif //MORGHSPICY_ELEMENTTYPES_H
