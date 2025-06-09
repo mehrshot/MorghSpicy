@@ -17,6 +17,7 @@ private:
 
     void handlePrintCommand(std::istringstream& iss);
     void handleShowSchematics();
+    void handleSaveCommand(std::istringstream& iss);
 
 public:
     CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner);

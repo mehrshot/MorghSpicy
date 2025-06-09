@@ -80,3 +80,10 @@ bool NodeManager::renameNode(const std::string& old_name, const std::string& new
     std::cout << "SUCCESS: Node renamed from '" << old_name << "' to '" << new_name << "'." << std::endl;
     return true;
 }
+
+std::string NodeManager::getNodeNameById(int id) const {
+    if (id_to_name.count(id)) {
+        return id_to_name.at(id);
+    }
+    return "INVALID_NODE";
+}
