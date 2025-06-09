@@ -1,2 +1,0 @@
-# A single resistor
-R_test nodeA nodeB 2.2k

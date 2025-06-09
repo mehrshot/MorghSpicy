@@ -26,7 +26,7 @@ private:
 public:
     SimulationRunner(Graph* g, MNASolver* solver);
 
-    void runTransient(double tstep, double tstop, const std::vector<OutputVariable>& requested_vars);
+    void runTransient(double tstep_initial, double tstop, double tmaxstep, const std::vector<OutputVariable>& requested_vars);
 
     void runDCSweep(const std::string& sourceName, double start, double stop, double increment, const std::vector<OutputVariable>& requested_vars);
 

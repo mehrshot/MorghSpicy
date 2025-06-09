@@ -294,17 +294,20 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
     iss >> analysis_type;
 
     if (analysis_type == "TRAN") {
-        std::string tstep_str, tstop_str;
-        if (!(iss >> tstep_str >> tstop_str)) {
-            std::cerr << "Error: Syntax error. Usage: print TRAN <tstep> <tstop> <var1> <var2> ..." << std::endl;
+        std::string tstep_str, tstop_str, tmaxstep_str;
+        if (!(iss >> tstep_str >> tstop_str >> tmaxstep_str)) {
+            std::cerr << "Error: Syntax error. Usage: print TRAN <tstep> <tstop> <tmaxstep> <var1> ..." << std::endl;
             return;
         }
         double tstep = parseValueWithPrefix(tstep_str);
         double tstop = parseValueWithPrefix(tstop_str);
-        if (tstep <= 0 || tstop <= 0 || tstep > tstop) {
+        double tmaxstep = parseValueWithPrefix(tmaxstep_str);
+
+        if (tstep <= 0 || tstop <= 0 || tmaxstep <= 0 || tstep > tstop) {
             std::cerr << "Error: Invalid time parameters for TRAN analysis." << std::endl;
             return;
         }
+
         std::vector<OutputVariable> requested_vars;
         std::string var_token;
         std::regex var_regex(R"((V|I)\((.+)\))");
@@ -328,7 +331,7 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
             std::cerr << "Error: No output variables specified for print command." << std::endl;
             return;
         }
-        simRunner->runTransient(tstep, tstop, requested_vars);
+        simRunner->runTransient(tstep, tstop, tmaxstep, requested_vars);
 
     } else if (analysis_type == "DC") {
         std::string sourceName, start_str, end_str, inc_str;

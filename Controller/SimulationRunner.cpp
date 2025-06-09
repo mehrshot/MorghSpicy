@@ -1,6 +1,7 @@
 #include "SimulationRunner.h"
 #include <iostream>
 #include <iomanip>
+#include <cmath>
 
 // Constants for the Newton-Raphson iterative solver
 const int MAX_NR_ITERATIONS = 100;
@@ -8,7 +9,7 @@ const double NR_TOLERANCE = 1e-6;
 
 SimulationRunner::SimulationRunner(Graph* g, MNASolver* solver) : graph(g), mnaSolver(solver) {}
 
-void SimulationRunner::runTransient(double tstep, double tstop, const std::vector<OutputVariable>& requested_vars) {
+void SimulationRunner::runTransient(double tstep_initial, double tstop, double tmaxstep, const std::vector<OutputVariable>& requested_vars) {
     if (!graph->isConnected()) {
         std::cerr << "Error: Circuit is disconnected or contains floating nodes." << std::endl;
         return;
@@ -20,12 +21,18 @@ void SimulationRunner::runTransient(double tstep, double tstop, const std::vecto
         return;
     }
 
+    // پارامترهای کنترل گام زمانی
+    const double reltol = 1e-3;
+    const double abstol = 1e-6;
+    const double safety_factor = 0.9;
+    const double max_increase_factor = 2.0;
+    const double min_timestep = 1e-15;
+
     Eigen::VectorXd prev_solution(mnaSolver->getTotalUnknowns());
     prev_solution.setZero();
+    Eigen::VectorXd final_solution;
 
-    std::cout << "MNA system is being constructed and solved at each time step..." << std::endl;
-
-    // Print table header
+    // چاپ هدر جدول
     std::cout << std::left << std::setw(12) << "Time";
     for (const auto& var : requested_vars) {
         std::string header = (var.type == OutputVariable::VOLTAGE ? "V(" : "I(") + var.name + ")";
@@ -33,47 +40,60 @@ void SimulationRunner::runTransient(double tstep, double tstop, const std::vecto
     }
     std::cout << std::endl;
 
-    // Print the initial state at t=0
+    double time = 0.0;
+    double h = tstep_initial;
+
+    // چاپ مقادیر اولیه در زمان صفر
     std::cout << std::left << std::fixed << std::setprecision(6);
-    std::cout << std::setw(12) << 0.0;
+    std::cout << std::setw(12) << time;
     for (const auto& var : requested_vars) {
         std::cout << std::setw(15) << 0.0;
     }
     std::cout << std::endl;
 
-    // Main transient analysis loop
-    for (double time = tstep; time <= tstop; time += tstep) {
-        Eigen::VectorXd current_guess = prev_solution; // Use previous step's solution as initial guess
-        Eigen::VectorXd final_solution;
-        bool converged = false;
+    // حلقه اصلی شبیه‌سازی با گام متغیر
+    while (time < tstop) {
+        if (time + h > tstop) { h = tstop - time; }
+        if (h > tmaxstep) { h = tmaxstep; }
+        if (h < min_timestep) { h = min_timestep; }
 
         for (Element* e : graph->getElements()) {
             if (e->type == SINUSOIDAL_SOURCE) {
-                dynamic_cast<SinusoidalSource*>(e)->updateTime(time);
+                dynamic_cast<SinusoidalSource*>(e)->updateTime(time + h);
             }
         }
 
+        // *** مهم‌ترین تغییر اینجاست ***
+        // برای مدارهای خطی (مثل RC)، نیازی به حلقه نیوتن-رافسون نیست.
+        // ماتریس فقط یک بار با استفاده از تاریخچه واقعی (prev_solution) ساخته و حل می‌شود.
+        mnaSolver->constructMNAMatrix(*graph, h, prev_solution);
+        final_solution = mnaSolver->solve();
 
-        // Newton-Raphson inner loop for non-linear circuits
-        for (int nr_iter = 0; nr_iter < MAX_NR_ITERATIONS; ++nr_iter) {
-            mnaSolver->constructMNAMatrix(*graph, tstep, current_guess);
-            final_solution = mnaSolver->solve();
+        if (final_solution.size() == 0) {
+            std::cerr << "Error: Solver failed at time " << time << ". Aborting." << std::endl;
+            break;
+        }
 
-            if (final_solution.size() == 0) break; // Solver failed
-
-            Eigen::VectorXd diff = final_solution - current_guess;
-            if (diff.norm() < NR_TOLERANCE) {
-                converged = true;
-                break;
+        // --- تخمین خطا ---
+        double error_norm = 0.0;
+        if (final_solution.size() > 0) {
+            for (int i = 0; i < final_solution.size(); ++i) {
+                double estimated_error = std::abs(final_solution(i) - prev_solution(i));
+                double tolerance = reltol * std::abs(final_solution(i)) + abstol;
+                if (tolerance > 1e-20) {
+                    error_norm += pow(estimated_error / tolerance, 2);
+                }
             }
-            current_guess = final_solution;
+            error_norm = sqrt(error_norm / final_solution.size());
         }
 
-        if (!converged) {
-            std::cerr << "Warning: Newton-Raphson failed to converge at t = " << time << "s." << std::endl;
-        }
+        // چون حلقه نیوتن-رافسون حذف شده، دیگر نیازی به بررسی همگرایی آن نیست
+        // و مستقیماً به سراغ منطق گام زمانی می‌رویم.
 
-        // Print current time step results
+        time += h;
+        prev_solution = final_solution;
+
+        // چاپ نتایج
         std::cout << std::left << std::fixed << std::setprecision(6);
         std::cout << std::setw(12) << time;
         for (const auto& var : requested_vars) {
@@ -87,14 +107,28 @@ void SimulationRunner::runTransient(double tstep, double tstop, const std::vecto
             } else { // CURRENT
                 Element* elem = graph->findElement(var.name);
                 if (elem) {
-                    result = calculate_element_current(elem, final_solution, prev_solution, tstep);
+                    result = calculate_element_current(elem, final_solution, prev_solution, h);
                 }
             }
             std::cout << std::setw(15) << result;
         }
         std::cout << std::endl;
 
-        prev_solution = final_solution;
+        // محاسبه گام زمانی بعدی
+        if (error_norm < 1.0) {
+            if (error_norm < 1e-9) {
+                h *= max_increase_factor;
+            } else {
+                double h_new = h * safety_factor * pow(error_norm, -0.2);
+                if (h_new > h * max_increase_factor) {
+                    h = h * max_increase_factor;
+                } else {
+                    h = h_new;
+                }
+            }
+        } else {
+            h = h * safety_factor * pow(error_norm, -0.25);
+        }
     }
 }
 
