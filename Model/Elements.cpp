@@ -139,7 +139,6 @@ void CurrentSource::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
     if (n1_idx != -1) b(n1_idx) -= value;
     if (n2_idx != -1) b(n2_idx) += value;
 }
-
 void Diode::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                      const std::map<int, int>& node_id_to_matrix_idx,
                      int extra_var_start_idx,
@@ -153,26 +152,26 @@ void Diode::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
     double v2_guess = (n2_idx == -1) ? 0.0 : current_guess(n2_idx);
     double vd_guess = v1_guess - v2_guess;
 
+    const double max_vd_forward = 0.85; // A reasonable forward voltage limit
+    if (vd_guess > max_vd_forward) {
+        vd_guess = max_vd_forward;
+    }
+    // --- END: FIX FOR NUMERICAL STABILITY ---
+
     double Geq, Ieq;
 
     // Zener Diode Logic: check for reverse breakdown
     if (model == "Z" && vd_guess < -Vz) {
-        // In breakdown, model as a large conductance (Geq) and a current source
-        // that forces the voltage across it to be Vz.
-        Geq = 1.0; // A large fixed conductance, e.g., 1 Siemens
-
-        // --- THIS IS THE CORRECTED LINE ---
-        // The equivalent current source should be based on Vz, not vd_guess.
+        Geq = 1.0;
         Ieq = Geq * Vz;
     } else {
-        // Standard Diode Model for forward bias and normal reverse bias
+        // Standard Diode Model
         double exp_val = std::exp(vd_guess / (n * Vt));
         double id_val = Is * (exp_val - 1.0);
         Geq = (Is / (n * Vt)) * exp_val;
         Ieq = id_val - Geq * vd_guess;
     }
 
-    // Stamping the equivalent circuit into the MNA matrices
     if (n1_idx != -1) A(n1_idx, n1_idx) += Geq;
     if (n2_idx != -1) A(n2_idx, n2_idx) += Geq;
     if (n1_idx != -1 && n2_idx != -1) {
@@ -183,7 +182,6 @@ void Diode::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
     if (n1_idx != -1) b(n1_idx) -= Ieq;
     if (n2_idx != -1) b(n2_idx) += Ieq;
 }
-
 void vccs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                     const std::map<int, int>& node_id_to_matrix_idx,
                     int extra_var_start_idx,

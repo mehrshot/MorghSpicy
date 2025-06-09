@@ -15,6 +15,7 @@ enum ElementType {
     VCVS,
     CCCS,
     CCVS,
-    SINUSOIDAL_SOURCE
+    SINUSOIDAL_SOURCE,
+    PULSE_SOURCE
 };
 #endif //MORGHSPICY_ELEMENTTYPES_H
