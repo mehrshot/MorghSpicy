@@ -284,6 +284,9 @@ void CommandParser::parseCommand(const std::string& line) {
     else if (cmd == "print") {
         handlePrintCommand(iss);
     }
+    else if (cmd == "save") {
+        handleSaveCommand(iss);
+    }
     else {
         std::cerr << "Error: Unknown command: " << cmd << std::endl;
     }
@@ -373,13 +376,12 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
 void CommandParser::handleShowSchematics() {
     while (true) {
         std::vector<std::filesystem::path> schematics;
-        std::cout << "\n-choose existing schematic:" << std::endl;
+        std::cout << "\n-Choose existing schematic to load:" << std::endl;
 
         int i = 1;
         try {
-            for (const auto& entry : std::filesystem::directory_iterator("schematics")) { // Or "." if you used solution 1
-                if (entry.path().filename() == "CMakeCache.txt") continue;
-
+            // Find all .txt files in the "schematics" directory
+            for (const auto& entry : std::filesystem::directory_iterator("schematics")) {
                 if (entry.path().extension() == ".txt") {
                     schematics.push_back(entry.path());
                     std::cout << i++ << "-" << entry.path().stem().string() << std::endl;
@@ -392,36 +394,96 @@ void CommandParser::handleShowSchematics() {
 
         if (schematics.empty()) {
             std::cout << "No schematic files (.txt) found." << std::endl;
+            return;
         }
 
         std::cout << ">>> ";
         std::string choice;
         if (!std::getline(std::cin, choice)) {
-            break;
+            break; // Exit on EOF
         }
-
         if (choice == "return") {
-            break;
+            break; // Exit if user types "return"
         }
 
         int choice_num;
         try {
+            // Convert user input to a number
             choice_num = std::stoi(choice);
             if (choice_num < 1 || choice_num > schematics.size()) {
                 std::cerr << "-Error: Inappropriate input" << std::endl;
-                continue;
+                continue; // Re-display menu on invalid number
             }
         } catch (...) {
             std::cerr << "-Error: Inappropriate input" << std::endl;
-            continue;
+            continue; // Re-display menu on non-numeric input
         }
+
+        // Get the path of the chosen schematic
         std::filesystem::path chosen_path = schematics[choice_num - 1];
-        std::ifstream infile(chosen_path);
-        if (!infile.is_open()) {
-            std::cerr << "Error: Could not open file " << chosen_path << std::endl;
-            continue;
-        }
-        std::cout << "\n" << chosen_path.stem().string() << ":" << std::endl;
-        std::cout << infile.rdbuf() << std::endl;
+
+        // Construct a "load" command string from the chosen path
+        std::string load_command = "load " + chosen_path.string();
+
+        // Execute the load command by calling the main parser function
+        std::cout << "Executing: " << load_command << std::endl;
+        parseCommand(load_command);
+
+        // Exit the menu loop to return to the main command prompt
+        break;
     }
+}
+
+void CommandParser::handleSaveCommand(std::istringstream& iss) {
+    std::string filename;
+    if (!(iss >> filename)) {
+        std::cerr << "Error: Syntax error. Usage: save <filename.txt>" << std::endl;
+        return;
+    }
+
+    // اطمینان از وجود پوشه schematics
+    std::filesystem::path schematics_dir = "schematics";
+    if (!std::filesystem::exists(schematics_dir)) {
+        std::filesystem::create_directory(schematics_dir);
+    }
+
+    std::filesystem::path full_path = schematics_dir / filename;
+    std::ofstream outfile(full_path);
+
+    if (!outfile.is_open()) {
+        std::cerr << "Error: Could not open file for writing: " << full_path << std::endl;
+        return;
+    }
+
+    // نوشتن اطلاعات هر قطعه در فایل
+    for (const auto& elem : graph->getElements()) {
+        char type_char = ' ';
+        // تبدیل enum به کاراکتر برای ذخیره‌سازی
+        switch (elem->type) {
+            case RESISTOR: type_char = 'R'; break;
+            case CAPACITOR: type_char = 'C'; break;
+            case INDUCTOR: type_char = 'L'; break;
+            case VOLTAGE_SOURCE: type_char = 'V'; break;
+            case CURRENT_SOURCE: type_char = 'I'; break;
+            case DIODE: type_char = 'D'; break;
+                // ... می‌توانید بقیه انواع را نیز اضافه کنید
+            default: continue; // قطعات ناشناس را ذخیره نکن
+        }
+
+        std::string n1_name = nodeManager->getNodeNameById(elem->node1);
+        std::string n2_name = nodeManager->getNodeNameById(elem->node2);
+
+        // فرمت ذخیره‌سازی باید مشابه فرمت خواندن دستور load باشد
+        outfile << type_char << " " << elem->name << " " << n1_name << " " << n2_name << " ";
+
+        if (elem->type == DIODE) {
+            // برای دیود، مدل آن ذخیره می‌شود
+            outfile << dynamic_cast<Diode*>(elem)->model << std::endl;
+        } else {
+            outfile << elem->value << std::endl;
+        }
+    }
+
+    outfile.close();
+    std::cout << "SUCCESS: Circuit saved to " << full_path.string() << std::endl;
 }

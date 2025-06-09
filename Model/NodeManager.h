@@ -29,6 +29,8 @@ public:
 
     void displayNodes() const;
 
+    std::string getNodeNameById(int id) const;
+
     bool renameNode(const std::string& old_name, const std::string& new_name);
 };
 
