@@ -1,0 +1,4 @@
+# RC Circuit
+V1 in gnd 5V
+R1 in out 1k
+C1 out gnd 1uF
