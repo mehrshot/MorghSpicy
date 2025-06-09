@@ -152,26 +152,26 @@ void Diode::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
     double v2_guess = (n2_idx == -1) ? 0.0 : current_guess(n2_idx);
     double vd_guess = v1_guess - v2_guess;
 
-    const double max_vd_forward = 0.85; // A reasonable forward voltage limit
+    // --- Diode Limiting for Numerical Stability ---
+    const double max_vd_forward = 0.85;
     if (vd_guess > max_vd_forward) {
         vd_guess = max_vd_forward;
     }
-    // --- END: FIX FOR NUMERICAL STABILITY ---
+    // --- End of Limiting Logic ---
 
     double Geq, Ieq;
 
-    // Zener Diode Logic: check for reverse breakdown
     if (model == "Z" && vd_guess < -Vz) {
         Geq = 1.0;
         Ieq = Geq * Vz;
     } else {
-        // Standard Diode Model
         double exp_val = std::exp(vd_guess / (n * Vt));
         double id_val = Is * (exp_val - 1.0);
         Geq = (Is / (n * Vt)) * exp_val;
         Ieq = id_val - Geq * vd_guess;
     }
 
+    // Stamping the equivalent circuit
     if (n1_idx != -1) A(n1_idx, n1_idx) += Geq;
     if (n2_idx != -1) A(n2_idx, n2_idx) += Geq;
     if (n1_idx != -1 && n2_idx != -1) {
