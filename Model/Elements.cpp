@@ -303,3 +303,54 @@ void Diode::display() {
     std::cout << "Diode " << name << ": Model = " << model
               << ", Nodes: " << node1 << " - " << node2 << std::endl;
 }
+void PulseSource::display() {
+    std::cout << "Pulse Source " << name << ": "
+              << "V1=" << v1 << "V, V2=" << v2 << "V, "
+              << "TD=" << td << "s, PW=" << pw << "s, PER=" << per << "s, "
+              << "Nodes: " << node1 << "-" << node2 << std::endl;
+}
+
+void PulseSource::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
+                           const std::map<int, int>& node_id_to_matrix_idx,
+                           int extra_var_start_idx,
+                           const Eigen::VectorXd& prev_solution,
+                           double h) {
+    int extra_index = extra_var_start_idx + extraVariableIndex;
+    int idx1 = get_matrix_idx(node1, node_id_to_matrix_idx);
+    int idx2 = get_matrix_idx(node2, node_id_to_matrix_idx);
+
+    if (idx1 != -1) A(idx1, extra_index) += 1.0;
+    if (idx2 != -1) A(idx2, extra_index) -= 1.0;
+
+    if (idx1 != -1) A(extra_index, idx1) += 1.0;
+    if (idx2 != -1) A(extra_index, idx2) -= 1.0;
+
+    b(extra_index) += getInstantaneousValue();
+}
+
+double PulseSource::getInstantaneousValue() const {
+    // Before the delay time, the voltage is at its initial value
+    if (time <= td) {
+        return v1;
+    }
+
+    // After the delay, calculate time within the current period
+    double time_in_period = fmod(time - td, per);
+
+    // During the rise time
+    if (time_in_period < tr) {
+        return v1 + (v2 - v1) * (time_in_period / tr);
+    }
+        // During the pulse width (high plateau)
+    else if (time_in_period < tr + pw) {
+        return v2;
+    }
+        // During the fall time
+    else if (time_in_period < tr + pw + tf) {
+        return v2 - (v2 - v1) * ((time_in_period - (tr + pw)) / tf);
+    }
+        // After fall time until the next period (low plateau)
+    else {
+        return v1;
+    }
+}

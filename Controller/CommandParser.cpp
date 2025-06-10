@@ -83,6 +83,42 @@ void CommandParser::parseCommand(const std::string& line) {
             std::cerr << "Error: Syntax error\n";
             return;
         }
+        std::string next_token;
+        // Get the current position in the stream
+        std::streampos original_pos = iss.tellg();
+
+        if (iss >> next_token && next_token == "PULSE") {
+            // If the next token is "PULSE", parse it
+            std::string params_str;
+            std::getline(iss, params_str); // Read the rest of the line: (v1 v2 ...)
+
+            // Remove parentheses from the parameters string
+            size_t first = params_str.find('(');
+            size_t last = params_str.rfind(')');
+            if (first == std::string::npos || last == std::string::npos) {
+                std::cerr << "Error: Malformed PULSE parameters. Missing parentheses." << std::endl;
+                return;
+            }
+            params_str = params_str.substr(first + 1, last - first - 1);
+
+            std::istringstream param_stream(params_str);
+            double v1=0, v2=0, td=0, tr=0, tf=0, pw=0, per=0;
+
+            if (!(param_stream >> v1 >> v2 >> td >> tr >> tf >> pw >> per)) {
+                std::cerr << "Error: Incorrect PULSE parameters. Expected: PULSE(v1 v2 td tr tf pw per)" << std::endl;
+                return;
+            }
+
+            int n1 = nodeManager->getOrCreateNodeId(n1_str);
+            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+
+            graph->addElement(new PulseSource(name, n1, n2, v1, v2, td, tr, tf, pw, per));
+            std::cout << "Added pulse source: " << name << std::endl;
+            return; // Important: Exit after handling the pulse source
+        } else {
+            // If it wasn't a PULSE source, go back to the original position in the stream
+            iss.seekg(original_pos);
+        }
 
         if (type == 'D') {
             std::string model;

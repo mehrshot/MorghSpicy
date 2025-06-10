@@ -251,6 +251,29 @@ public:
         b(extra_index) += getInstantaneousValue();
     }
 };
+class PulseSource : public Element {
+public:
+    double v1, v2, td, tr, tf, pw, per;
+private:
+    double time;
 
+public:
+    PulseSource(std::string n, int n1, int n2, double v_initial, double v_pulsed,
+                double t_delay, double t_rise, double t_fall, double p_width, double period)
+            : Element(n, n1, n2, v_initial, PULSE_SOURCE),
+              v1(v_initial), v2(v_pulsed), td(t_delay), tr(t_rise), tf(t_fall), pw(p_width), per(period), time(0.0) {
+        introducesExtraVariable = true;
+    }
+
+    void updateTime(double newTime) { time = newTime; }
+    double getInstantaneousValue() const;
+
+    void display() override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
+                  const std::map<int, int>& node_id_to_matrix_idx,
+                  int extra_var_start_idx,
+                  const Eigen::VectorXd& prev_solution,
+                  double h) override;
+};
 
 #endif //MORGHSPICY_ELEMENTS_H

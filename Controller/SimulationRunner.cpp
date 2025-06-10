@@ -61,6 +61,9 @@ void SimulationRunner::runTransient(double tstep_initial, double tstop, double t
             if (e->type == SINUSOIDAL_SOURCE) {
                 dynamic_cast<SinusoidalSource*>(e)->updateTime(time + h);
             }
+            else if (e->type == PULSE_SOURCE) {
+                dynamic_cast<PulseSource*>(e)->updateTime(time + h);
+            }
         }
 
         // *** مهم‌ترین تغییر اینجاست ***
