@@ -99,7 +99,7 @@ void MNASolver::initializeMatrix(const Graph& circuitGraph) {
     }
     if (!has_ground_node && !all_nodes_in_graph.empty()) {
         std::cerr << "Error: No ground node (ID 0) detected in the circuit." << std::endl;
-        total_unknowns = 0; // Prevent further operations
+        total_unknowns = 0;
         return;
     }
 

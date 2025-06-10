@@ -67,7 +67,7 @@ void CommandParser::parseCommand(const std::string& line) {
                 return;
             }
             nodeManager->assignNodeAsGND(node);
-            std::cout << "Node " << node << " assigned as GND\n";
+//            std::cout << "Node " << node << " assigned as GND\n";
             return;
         }
 

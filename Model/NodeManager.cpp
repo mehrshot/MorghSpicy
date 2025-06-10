@@ -25,11 +25,18 @@ int NodeManager::getOrCreateNodeId(const std::string& node_name) {
 }
 
 void NodeManager::assignNodeAsGND(const std::string& node_name) {
+    if (ground_assigned_by_user) {
+        std::cerr << "Error: Multiple ground nodes defined. Ground is already assigned to '" << id_to_name[0] << "'." << std::endl;
+        return;
+    }
+
     if (name_to_id.count(node_name) && name_to_id[node_name] != 0) {
         std::cerr << "Warning: Reassigning existing node \"" << node_name << "\" as GND.\n";
     }
     name_to_id[node_name] = 0;
-    id_to_name[0] = node_name; // UPDATED: Keep reverse map in sync
+    id_to_name[0] = node_name;
+    ground_assigned_by_user = true;
+    std::cout << "Node " << node_name << " assigned as GND." << std::endl;
 }
 
 // ADDED: Implementation for displayNodes
@@ -87,3 +94,4 @@ std::string NodeManager::getNodeNameById(int id) const {
     }
     return "INVALID_NODE";
 }
+
