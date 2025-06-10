@@ -88,9 +88,8 @@ void CommandParser::parseCommand(const std::string& line) {
         std::streampos original_pos = iss.tellg();
 
         if (iss >> next_token && next_token == "PULSE") {
-            // If the next token is "PULSE", parse it
             std::string params_str;
-            std::getline(iss, params_str); // Read the rest of the line: (v1 v2 ...)
+            std::getline(iss, params_str); // Read the rest of the line: (v1 v2 td tr tf pw per)
 
             // Remove parentheses from the parameters string
             size_t first = params_str.find('(');
@@ -102,12 +101,24 @@ void CommandParser::parseCommand(const std::string& line) {
             params_str = params_str.substr(first + 1, last - first - 1);
 
             std::istringstream param_stream(params_str);
-            double v1=0, v2=0, td=0, tr=0, tf=0, pw=0, per=0;
+            std::vector<std::string> param_tokens;
+            std::string tok;
+            while (param_stream >> tok) {
+                param_tokens.push_back(tok);
+            }
 
-            if (!(param_stream >> v1 >> v2 >> td >> tr >> tf >> pw >> per)) {
+            if (param_tokens.size() != 7) {
                 std::cerr << "Error: Incorrect PULSE parameters. Expected: PULSE(v1 v2 td tr tf pw per)" << std::endl;
                 return;
             }
+
+            double v1 = parseValueWithPrefix(param_tokens[0]);
+            double v2 = parseValueWithPrefix(param_tokens[1]);
+            double td = parseValueWithPrefix(param_tokens[2]);
+            double tr = parseValueWithPrefix(param_tokens[3]);
+            double tf = parseValueWithPrefix(param_tokens[4]);
+            double pw = parseValueWithPrefix(param_tokens[5]);
+            double per = parseValueWithPrefix(param_tokens[6]);
 
             int n1 = nodeManager->getOrCreateNodeId(n1_str);
             int n2 = nodeManager->getOrCreateNodeId(n2_str);
@@ -115,7 +126,8 @@ void CommandParser::parseCommand(const std::string& line) {
             graph->addElement(new PulseSource(name, n1, n2, v1, v2, td, tr, tf, pw, per));
             std::cout << "Added pulse source: " << name << std::endl;
             return; // Important: Exit after handling the pulse source
-        } else {
+        }
+        else {
             // If it wasn't a PULSE source, go back to the original position in the stream
             iss.seekg(original_pos);
         }
