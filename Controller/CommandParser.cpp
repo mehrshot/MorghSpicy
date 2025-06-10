@@ -483,23 +483,42 @@ void CommandParser::handleShowSchematics() {
 }
 
 void CommandParser::handleSaveCommand(std::istringstream& iss) {
-    std::string filename;
-    if (!(iss >> filename)) {
-        std::cerr << "Error: Syntax error. Usage: save <filename.txt>" << std::endl;
+    std::string user_path_str;
+    if (!(iss >> user_path_str)) {
+        std::cerr << "Error: Syntax error. Usage: save <path/to/filename.txt>" << std::endl;
         return;
     }
 
-    // اطمینان از وجود پوشه schematics
-    std::filesystem::path schematics_dir = "schematics";
-    if (!std::filesystem::exists(schematics_dir)) {
-        std::filesystem::create_directory(schematics_dir);
+    std::filesystem::path user_path(user_path_str);
+    std::filesystem::path final_path;
+
+    // بررسی می‌کنیم که آیا کاربر مسیر کامل داده یا فقط نام فایل
+    // متد has_parent_path() چک می‌کند که آیا در مسیر، پوشه‌ای ذکر شده است یا نه
+    if (user_path.has_parent_path() && !user_path.parent_path().empty()) {
+        // کاربر یک مسیر کامل یا نسبی داده است (مثلا C:\circuits\c1.txt یا ../my_circuits/c1.txt)
+        final_path = user_path;
+        // اگر پوشه والد وجود ندارد، آن را می‌سازیم
+        if (!std::filesystem::exists(final_path.parent_path())) {
+            try {
+                std::filesystem::create_directories(final_path.parent_path());
+            } catch (const std::filesystem::filesystem_error& e) {
+                std::cerr << "Error: Could not create directory " << final_path.parent_path() << ": " << e.what() << std::endl;
+                return;
+            }
+        }
+    } else {
+        // کاربر فقط نام فایل را داده است (مثلا c1.txt)، پس در پوشه پیش‌فرض schematics ذخیره می‌کنیم
+        std::filesystem::path schematics_dir = "schematics";
+        if (!std::filesystem::exists(schematics_dir)) {
+            std::filesystem::create_directory(schematics_dir);
+        }
+        final_path = schematics_dir / user_path;
     }
 
-    std::filesystem::path full_path = schematics_dir / filename;
-    std::ofstream outfile(full_path);
+    std::ofstream outfile(final_path);
 
     if (!outfile.is_open()) {
-        std::cerr << "Error: Could not open file for writing: " << full_path << std::endl;
+        std::cerr << "Error: Could not open file for writing: " << final_path << std::endl;
         return;
     }
 
@@ -514,24 +533,30 @@ void CommandParser::handleSaveCommand(std::istringstream& iss) {
             case VOLTAGE_SOURCE: type_char = 'V'; break;
             case CURRENT_SOURCE: type_char = 'I'; break;
             case DIODE: type_char = 'D'; break;
-                // ... می‌توانید بقیه انواع را نیز اضافه کنید
-            default: continue; // قطعات ناشناس را ذخیره نکن
+            case VCCS: type_char = 'G'; break;
+            case VCVS: type_char = 'E'; break;
+            case CCCS: type_char = 'F'; break;
+            case CCVS: type_char = 'H'; break;
+                // SINUSOIDAL_SOURCE و PULSE_SOURCE به فرمت متفاوتی نیاز دارند و در اینجا ساده‌سازی شده‌اند
+                // برای ذخیره کامل آن‌ها باید منطق جداگانه‌ای پیاده‌سازی شود.
+            default: continue; // قطعات ناشناس یا پیچیده را ذخیره نکن
         }
 
         std::string n1_name = nodeManager->getNodeNameById(elem->node1);
         std::string n2_name = nodeManager->getNodeNameById(elem->node2);
 
-        // فرمت ذخیره‌سازی باید مشابه فرمت خواندن دستور load باشد
+        // فرمت ذخیره‌سازی باید مشابه فرمت خواندن دستور add باشد
         outfile << type_char << " " << elem->name << " " << n1_name << " " << n2_name << " ";
 
         if (elem->type == DIODE) {
             // برای دیود، مدل آن ذخیره می‌شود
             outfile << dynamic_cast<Diode*>(elem)->model << std::endl;
         } else {
+            // برای سایر قطعات ساده، مقدارشان ذخیره می‌شود
             outfile << elem->value << std::endl;
         }
     }
 
     outfile.close();
-    std::cout << "SUCCESS: Circuit saved to " << full_path.string() << std::endl;
+    std::cout << "SUCCESS: Circuit saved to " << final_path.string() << std::endl;
 }
