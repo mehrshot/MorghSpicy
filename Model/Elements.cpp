@@ -237,12 +237,16 @@ void cccs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
 
 void cccs::linkControlSource(const std::vector<Element*>& all) {
     for (Element* e : all) {
-        if (e->name == controlling_name && e->introducesExtraVariable) {
+        if (e->name == controlling_name) {
             controlling_elem = e;
-            break;
+            std::cerr << "[DEBUG] CCCS " << name << " linked to control source: " << controlling_name << std::endl;
+            return;
         }
     }
+    std::cerr << "Warning: CCCS " << name << " could not find controlling source: " << controlling_name << std::endl;
 }
+
+
 
 
 
@@ -268,12 +272,14 @@ void ccvs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
 
 void ccvs::linkControlSource(const std::vector<Element*>& all) {
     for (Element* e : all) {
-        if (e->name == controlling_name && e->introducesExtraVariable) {
+        if (e->name == controlling_name) {
             controlling_elem = e;
-            break;
+            return;
         }
     }
+    std::cerr << "Warning: CCVS " << name << " could not find controlling source: " << controlling_name << std::endl;
 }
+
 
 
 

@@ -114,8 +114,20 @@ void MNASolver::initializeMatrix(const Graph& circuitGraph) {
     }
 
     // 4. Link current-controlled sources to their controlling voltage source.
+
     // This step is necessary before counting extra variables.
     const std::vector<Element*>& all_elements = circuitGraph.getElements();
+
+
+
+    int num_extra_vars = 0;
+    for (Element* elem : all_elements) {
+        if (elem->introducesExtraVariable) {
+            elem->extraVariableIndex = num_extra_vars++;
+        }
+    }
+
+
     for (Element* e : all_elements) {
         if (e->type == CCCS) {
             dynamic_cast<cccs*>(e)->linkControlSource(all_elements);
@@ -126,12 +138,6 @@ void MNASolver::initializeMatrix(const Graph& circuitGraph) {
 
     // 5. Count ALL elements that introduce an extra variable (V, L, VCVS, CCVS, etc.)
     // and assign them their index in the 'extra variables' section of the matrix.
-    int num_extra_vars = 0;
-    for (Element* elem : all_elements) {
-        if (elem->introducesExtraVariable) {
-            elem->extraVariableIndex = num_extra_vars++;
-        }
-    }
 
     // 6. Calculate the total size of the MNA matrix.
     total_unknowns = num_non_ground_nodes + num_extra_vars;
