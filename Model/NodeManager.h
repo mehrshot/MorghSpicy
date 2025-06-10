@@ -20,6 +20,8 @@ private:
     int next_id;
     Graph* graph;
 
+    bool ground_assigned_by_user = false;
+
 public:
     NodeManager(Graph* g);
 

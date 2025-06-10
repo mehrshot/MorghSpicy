@@ -10,14 +10,15 @@ const double NR_TOLERANCE = 1e-6;
 SimulationRunner::SimulationRunner(Graph* g, MNASolver* solver) : graph(g), mnaSolver(solver) {}
 
 void SimulationRunner::runTransient(double tstep_initial, double tstop, double tmaxstep, const std::vector<OutputVariable>& requested_vars) {
-    if (!graph->isConnected()) {
-        std::cerr << "Error: Circuit is disconnected or contains floating nodes." << std::endl;
+    mnaSolver->initializeMatrix(*graph);
+
+    if (mnaSolver->getTotalUnknowns() == 0) {
+        std::cerr << "Error: Simulation cannot run, circuit is not correctly defined." << std::endl;
         return;
     }
 
-    mnaSolver->initializeMatrix(*graph);
-    if (mnaSolver->getTotalUnknowns() == 0) {
-        std::cerr << "Error: Simulation cannot run, circuit is not correctly defined." << std::endl;
+    if (!graph->isConnected()) {
+        std::cerr << "Error: Circuit is disconnected or contains floating nodes." << std::endl;
         return;
     }
 
@@ -136,6 +137,12 @@ void SimulationRunner::runTransient(double tstep_initial, double tstop, double t
 }
 
 void SimulationRunner::runDCSweep(const std::string& sourceName, double start, double stop, double increment, const std::vector<OutputVariable>& requested_vars) {
+    mnaSolver->initializeMatrix(*graph);
+
+    if (mnaSolver->getTotalUnknowns() == 0) {
+        std::cerr << "Error: Simulation cannot run, the circuit is not correctly defined." << std::endl;
+        return;
+    }
     if (!graph->isConnected()) {
         std::cerr << "Error: Circuit is disconnected or contains floating nodes." << std::endl;
         return;
@@ -144,12 +151,6 @@ void SimulationRunner::runDCSweep(const std::string& sourceName, double start, d
     Element* swept_element = graph->findElement(sourceName);
     if (!swept_element) {
         std::cerr << "Error: Source '" << sourceName << "' not found for DC sweep." << std::endl;
-        return;
-    }
-
-    mnaSolver->initializeMatrix(*graph);
-    if (mnaSolver->getTotalUnknowns() == 0) {
-        std::cerr << "Error: Simulation cannot run, the circuit is not correctly defined." << std::endl;
         return;
     }
 
