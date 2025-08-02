@@ -95,7 +95,6 @@ void SimulationRunner::runTransient(double tstep_initial, double tstop, double t
         // و مستقیماً به سراغ منطق گام زمانی می‌رویم.
 
         time += h;
-        prev_solution = final_solution;
 
         // چاپ نتایج
         std::cout << std::left << std::fixed << std::setprecision(6);
@@ -117,6 +116,8 @@ void SimulationRunner::runTransient(double tstep_initial, double tstop, double t
             std::cout << std::setw(15) << result;
         }
         std::cout << std::endl;
+
+        prev_solution = final_solution;
 
         // محاسبه گام زمانی بعدی
         if (error_norm < 1.0) {
