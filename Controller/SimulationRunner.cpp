@@ -2,140 +2,106 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <functional>
 
 // Constants for the Newton-Raphson iterative solver
 const int MAX_NR_ITERATIONS = 100;
 const double NR_TOLERANCE = 1e-6;
 
-SimulationRunner::SimulationRunner(Graph* g, MNASolver* solver) : graph(g), mnaSolver(solver) {}
+SimulationRunner::SimulationRunner(Graph* g, MNASolver* solver, NodeManager* nm)
+        : graph(g), mnaSolver(solver), nodeManager(nm) {}
 
-void SimulationRunner::runTransient(double tstep_initial, double tstop, double tmaxstep, const std::vector<OutputVariable>& requested_vars) {
+PlotData SimulationRunner::runTransient(double tstep_initial, double tstop, double tmaxstep, const std::vector<OutputVariable>& requested_vars) {
+    PlotData plotData;
     mnaSolver->initializeMatrix(*graph);
 
-    if (mnaSolver->getTotalUnknowns() == 0) {
-        std::cerr << "Error: Simulation cannot run, circuit is not correctly defined." << std::endl;
-        return;
+    // Initial sanity checks
+    if (mnaSolver->getTotalUnknowns() == 0 || !graph->isConnected()) {
+        std::cerr << "Error: Simulation cannot run, circuit is not correctly defined or is disconnected." << std::endl;
+        return plotData;
     }
 
-    if (!graph->isConnected()) {
-        std::cerr << "Error: Circuit is disconnected or contains floating nodes." << std::endl;
-        return;
-    }
+    // --- Optimization: Pre-resolve output variable getters ---
+    // Instead of searching for nodes/elements by name inside the loop,
+    // we create a vector of functions that directly access the results.
+    std::vector<std::function<double(const Eigen::VectorXd&, const Eigen::VectorXd&, double)>> value_getters;
+    for (const auto& var : requested_vars) {
+        plotData.series_names.push_back((var.type == OutputVariable::VOLTAGE ? "V(" : "I(") + var.name + ")");
+        plotData.data_series.emplace_back();
 
-    // پارامترهای کنترل گام زمانی
-    const double reltol = 1e-3;
-    const double abstol = 1e-6;
-    const double safety_factor = 0.9;
-    const double max_increase_factor = 2.0;
-    const double min_timestep = 1e-15;
+        if (var.type == OutputVariable::VOLTAGE) {
+            int node_id = nodeManager->getOrCreateNodeId(var.name);
+            if (node_id != -1 && mnaSolver->getNodeToMatrixIdxMap().count(node_id)) {
+                int matrix_idx = mnaSolver->getNodeToMatrixIdxMap().at(node_id);
+                value_getters.push_back([matrix_idx](const Eigen::VectorXd& sol, const Eigen::VectorXd&, double) {
+                    return sol(matrix_idx);
+                });
+            } else {
+                value_getters.push_back([](const Eigen::VectorXd&, const Eigen::VectorXd&, double) { return 0.0; }); // Placeholder
+            }
+        } else { // CURRENT
+            Element* elem = graph->findElement(var.name);
+            if (elem) {
+                value_getters.push_back([this, elem](const Eigen::VectorXd& sol, const Eigen::VectorXd& prev_sol, double h) {
+                    return this->calculate_element_current(elem, sol, prev_sol, h);
+                });
+            } else {
+                value_getters.push_back([](const Eigen::VectorXd&, const Eigen::VectorXd&, double) { return 0.0; }); // Placeholder
+            }
+        }
+    }
 
     Eigen::VectorXd prev_solution(mnaSolver->getTotalUnknowns());
     prev_solution.setZero();
-    Eigen::VectorXd final_solution;
 
-    // چاپ هدر جدول
-    std::cout << std::left << std::setw(12) << "Time";
-    for (const auto& var : requested_vars) {
-        std::string header = (var.type == OutputVariable::VOLTAGE ? "V(" : "I(") + var.name + ")";
-        std::cout << std::setw(15) << header;
+    // --- Optimization: Pre-allocate vector memory ---
+    size_t estimated_steps = static_cast<size_t>(tstop / tstep_initial) + 100;
+    plotData.time_axis.reserve(estimated_steps);
+    for(auto& series : plotData.data_series) {
+        series.reserve(estimated_steps);
     }
-    std::cout << std::endl;
 
     double time = 0.0;
     double h = tstep_initial;
 
-    // چاپ مقادیر اولیه در زمان صفر
-    std::cout << std::left << std::fixed << std::setprecision(6);
-    std::cout << std::setw(12) << time;
-    for (const auto& var : requested_vars) {
-        std::cout << std::setw(15) << 0.0;
+    // Store initial conditions at t=0
+    plotData.time_axis.push_back(time);
+    for(auto& series : plotData.data_series) {
+        series.push_back(0.0);
     }
-    std::cout << std::endl;
 
-    // حلقه اصلی شبیه‌سازی با گام متغیر
+    // --- Main simulation loop ---
     while (time < tstop) {
         if (time + h > tstop) { h = tstop - time; }
         if (h > tmaxstep) { h = tmaxstep; }
-        if (h < min_timestep) { h = min_timestep; }
 
-        for (Element* e : graph->getElements()) {
-            if (e->type == SINUSOIDAL_SOURCE) {
-                dynamic_cast<SinusoidalSource*>(e)->updateTime(time + h);
-            }
-            else if (e->type == PULSE_SOURCE) {
-                dynamic_cast<PulseSource*>(e)->updateTime(time + h);
-            }
-        }
+        // Update time-dependent sources
+        graph->updateTimeDependentSources(time + h);
 
-        // *** مهم‌ترین تغییر اینجاست ***
-        // برای مدارهای خطی (مثل RC)، نیازی به حلقه نیوتن-رافسون نیست.
-        // ماتریس فقط یک بار با استفاده از تاریخچه واقعی (prev_solution) ساخته و حل می‌شود.
         mnaSolver->constructMNAMatrix(*graph, h, prev_solution);
-        final_solution = mnaSolver->solve();
+        Eigen::VectorXd final_solution = mnaSolver->solve();
 
         if (final_solution.size() == 0) {
             std::cerr << "Error: Solver failed at time " << time << ". Aborting." << std::endl;
             break;
         }
 
-        // --- تخمین خطا ---
-        double error_norm = 0.0;
-        if (final_solution.size() > 0) {
-            for (int i = 0; i < final_solution.size(); ++i) {
-                double estimated_error = std::abs(final_solution(i) - prev_solution(i));
-                double tolerance = reltol * std::abs(final_solution(i)) + abstol;
-                if (tolerance > 1e-20) {
-                    error_norm += pow(estimated_error / tolerance, 2);
-                }
-            }
-            error_norm = sqrt(error_norm / final_solution.size());
+        time += h;
+
+        // Store results
+        plotData.time_axis.push_back(time);
+        for (size_t i = 0; i < value_getters.size(); ++i) {
+            double result = value_getters[i](final_solution, prev_solution, h);
+            plotData.data_series[i].push_back(result);
         }
 
-        // چون حلقه نیوتن-رافسون حذف شده، دیگر نیازی به بررسی همگرایی آن نیست
-        // و مستقیماً به سراغ منطق گام زمانی می‌رویم.
-
-        time += h;
         prev_solution = final_solution;
 
-        // چاپ نتایج
-        std::cout << std::left << std::fixed << std::setprecision(6);
-        std::cout << std::setw(12) << time;
-        for (const auto& var : requested_vars) {
-            double result = 0.0;
-            if (var.type == OutputVariable::VOLTAGE) {
-                int node_id = -1;
-                for(const auto& node : graph->getNodes()){ if(node->getName() == var.name){ node_id = node->getId(); break; } }
-                if (node_id != -1 && mnaSolver->getNodeToMatrixIdxMap().count(node_id)) {
-                    result = final_solution(mnaSolver->getNodeToMatrixIdxMap().at(node_id));
-                }
-            } else { // CURRENT
-                Element* elem = graph->findElement(var.name);
-                if (elem) {
-                    result = calculate_element_current(elem, final_solution, prev_solution, h);
-                }
-            }
-            std::cout << std::setw(15) << result;
-        }
-        std::cout << std::endl;
-
-        // محاسبه گام زمانی بعدی
-        if (error_norm < 1.0) {
-            if (error_norm < 1e-9) {
-                h *= max_increase_factor;
-            } else {
-                double h_new = h * safety_factor * pow(error_norm, -0.2);
-                if (h_new > h * max_increase_factor) {
-                    h = h * max_increase_factor;
-                } else {
-                    h = h_new;
-                }
-            }
-        } else {
-            h = h * safety_factor * pow(error_norm, -0.25);
-        }
+        // Note: Variable time-stepping logic (LTE) could be re-implemented here for adaptive step control.
     }
-}
 
+    return plotData;
+}
 void SimulationRunner::runDCSweep(const std::string& sourceName, double start, double stop, double increment, const std::vector<OutputVariable>& requested_vars) {
     mnaSolver->initializeMatrix(*graph);
 

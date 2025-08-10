@@ -55,6 +55,17 @@ public:
         }
     }
 
+    void updateTimeDependentSources(double time) {
+        for (Element* elem : elements) {
+            // Attempt to cast to each type of time-dependent source
+            if (auto* pulse_src = dynamic_cast<PulseSource*>(elem)) {
+                pulse_src->updateTime(time);
+            } else if (auto* sin_src = dynamic_cast<SinusoidalSource*>(elem)) {
+                sin_src->updateTime(time);
+            }
+        }
+    }
+
     bool isConnected() const {
         if (nodes.empty() || elements.empty()) {
             return false; // An empty or element-less circuit is not considered validly connected
