@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include "Exceptions.h"
 
 CommandParser::CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner)
         : graph(g), nodeManager(nm), simRunner(runner) {}

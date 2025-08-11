@@ -174,20 +174,4 @@ public:
 
 };
 
-class Circuit {
-private:
-    std::vector<Element*> elements;
-
-public:
-    void addElement(Element* e) {
-        elements.push_back(e);
-    }
-
-    void displayElements() {
-        for (auto e : elements) {
-            e->display();
-        }
-    }
-};
-
 #endif // MORGHSPICY_GRAPH_H
