@@ -1,4 +1,7 @@
 #include "SimulationRunner.h"
+#include "Model/MNASolver.h"
+#include "Model/NodeManager.h"
+#include "Model/Elements.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>

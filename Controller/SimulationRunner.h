@@ -31,9 +31,9 @@ struct PlotData {
 
 class SimulationRunner {
 private:
-    Graph* graph;
-    MNASolver* mnaSolver;
-    NodeManager* nodeManager;
+    Graph* graph{};
+    MNASolver* mnaSolver{};
+    NodeManager* nodeManager{};
     double calculate_element_current(Element* elem, const Eigen::VectorXd& solution_vector, const Eigen::VectorXd& prev_solution, double h);
 
 public:

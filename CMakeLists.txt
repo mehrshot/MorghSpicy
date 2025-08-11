@@ -15,15 +15,22 @@ find_package(Eigen3 QUIET CONFIG)             # provides Eigen3::Eigen when inst
 # --- Sources ---
 add_executable(MorghSpicy
         main.cpp
-        Controller/CommandParser.cpp
+
+        # Controller
         Controller/SimulationRunner.cpp
+        Controller/CommandParser.cpp
+        Controller/Signal.cpp
+
+        # Model
         Model/Elements.cpp
-        Model/MNASolver.cpp
         Model/NodeManager.cpp
+        Model/MNASolver.cpp
+
+        # View
         View/App.cpp
-        View/App.h
         View/Plotter.cpp
-        View/Plotter.h
+        Controller/Signal.cpp
+        Controller/Signal.h
 )
 
 # --- Include paths (project headers) ---
@@ -39,3 +46,5 @@ target_link_libraries(MorghSpicy
 if (Eigen3_FOUND)
     target_link_libraries(MorghSpicy PRIVATE Eigen3::Eigen)
 endif()
+
+target_compile_definitions(MorghSpicy PRIVATE SDL_MAIN_HANDLED)

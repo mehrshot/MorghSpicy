@@ -1,16 +1,13 @@
 // Created by Ali-Er on 6/6/2025.
 
 #include "CommandParser.h"
+#include "Model/Graph.h"
+#include "Model/NodeManager.h"
+#include "Controller/SimulationRunner.h"
 #include <sstream>
 #include <iostream>
-#include <cctype>
-#include <unordered_set>
-#include <regex>
-#include <fstream>
-#include <string>
-#include <vector>
-#include <filesystem>
-#include "Exceptions.h"
+
+CommandParser::CommandParser() = default;
 
 CommandParser::CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner)
         : graph(g), nodeManager(nm), simRunner(runner) {}
@@ -47,7 +44,7 @@ double parseValueWithPrefix(const std::string& str) {
     }
 }
 
-void CommandParser::parseCommand(const std::string& line) {
+void CommandParser::parseCommandCore(const std::string& line) {
     std::istringstream iss(line);
     std::string cmd;
     iss >> cmd;
@@ -107,6 +104,44 @@ void CommandParser::parseCommand(const std::string& line) {
             while (param_stream >> tok) {
                 param_tokens.push_back(tok);
             }
+
+            // minimal whitespace split (local helper is fine too)
+            auto split_ws = [](const std::string& s){
+                std::vector<std::string> out; std::string w; std::istringstream iss(s);
+                while (iss >> w) out.push_back(w);
+                return out;
+            };
+
+            std::vector<std::string> parts = split_ws(line);
+            if (!parts.empty() && parts[0] == "scope") {
+                // scope load path=<file> Fs=10000 t=0.1 chunk=8192
+                // scope clear
+                if (parts.size() >= 2 && parts[1] == "load") {
+                    std::string path;
+                    double Fs = 1000.0, tStop = 1.0;
+                    int chunk = 4096;
+                    for (size_t i = 2; i < parts.size(); ++i) {
+                        auto& s = parts[i];
+                        auto eq = s.find('=');
+                        if (eq == std::string::npos) continue;
+                        auto k = s.substr(0, eq);
+                        auto v = s.substr(eq + 1);
+                        if (k == "path") path = v;
+                        else if (k == "Fs") Fs = std::stod(v);
+                        else if (k == "t") tStop = std::stod(v);
+                        else if (k == "chunk") chunk = std::stoi(v);
+                    }
+                    // hook this into App if you already added callbacks; otherwise just echo:
+                    std::cout << "[scope] load path=" << path << " Fs=" << Fs
+                              << " t=" << tStop << " chunk=" << chunk << "\n";
+                    return; // prevent the rest of your parser from re-handling "scope"
+                }
+                if (parts.size() >= 2 && parts[1] == "clear") {
+                    std::cout << "[scope] clear\n";
+                    return;
+                }
+            }
+
 
             if (param_tokens.size() != 7) {
                 std::cerr << "Error: Incorrect PULSE parameters. Expected: PULSE(v1 v2 td tr tf pw per)" << std::endl;
@@ -339,6 +374,55 @@ void CommandParser::parseCommand(const std::string& line) {
     else {
         std::cerr << "Error: Unknown command: " << cmd << std::endl;
     }
+}
+
+void CommandParser::parseCommand(const std::string& line) {
+    // --- Minimal, safe whitespace tokenizer ---
+    auto split_ws = [](const std::string& s){
+        std::vector<std::string> out; out.reserve(8);
+        std::istringstream iss(s); std::string w;
+        while (iss >> w) out.push_back(w);
+        return out;
+    };
+
+    const auto parts = split_ws(line);
+    if (!parts.empty() && parts[0] == "scope") {
+        // scope load path=<file> Fs=10000 t=0.1 chunk=8192
+        // scope clear
+        if (parts.size() >= 2 && parts[1] == "load") {
+            std::string path;
+            double Fs   = 1000.0;
+            double tStop= 1.0;
+            int    chunk= 4096;
+
+            for (size_t i = 2; i < parts.size(); ++i) {
+                const auto& s = parts[i];
+                const auto  eq = s.find('=');
+                if (eq == std::string::npos) continue;
+                const auto  k = s.substr(0, eq);
+                const auto  v = s.substr(eq + 1);
+                if      (k == "path")  path  = v;
+                else if (k == "Fs")    Fs    = std::stod(v);
+                else if (k == "t")     tStop = std::stod(v);
+                else if (k == "chunk") chunk = std::stoi(v);
+            }
+
+            if (onScopeLoad) onScopeLoad(path, Fs, tStop, chunk);
+            else std::cout << "[scope] load path=" << path << " Fs=" << Fs
+                           << " t=" << tStop << " chunk=" << chunk
+                           << " (no callback wired)\n";
+            return; // handled
+        }
+        if (parts.size() >= 2 && parts[1] == "clear") {
+            if (onScopeClear) onScopeClear();
+            else std::cout << "[scope] clear (no callback wired)\n";
+            return; // handled
+        }
+        // Unknown scope subcommand -> fall through to legacy
+    }
+
+    // Not a 'scope' command (or unknown subcmd): use your original parser
+    parseCommandCore(line);
 }
 
 void CommandParser::handlePrintCommand(std::istringstream& iss) {
