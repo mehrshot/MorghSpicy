@@ -25,6 +25,7 @@ add_executable(MorghSpicy
         Model/Elements.cpp
         Model/NodeManager.cpp
         Model/MNASolver.cpp
+        Model/Graph.cpp
 
         # View
         View/App.cpp

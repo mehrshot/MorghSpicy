@@ -2,12 +2,13 @@
 // Created by Mehrshad on 5/29/2025.
 //
 
-#include "MNASolver.h"
+#include <set>
+#include <unordered_set>
 
+#include "MNASolver.h"
 #include "Graph.h"
 #include "Elements.h"
 #include "Node.h"
-
 #include "Common_Includes.h"
 
 MNASolver::MNASolver() :
@@ -28,6 +29,10 @@ void MNASolver::constructMNAMatrix(const Graph& circuitGraph, double timestep_h,
     for (Element* elem_ptr : all_elements_in_graph) {
         elem_ptr->stampMNA(A_matrix, b_vector, node_id_to_matrix_idx,
                            getExtraVariableStartIndex(), prev_solution, timestep_h);
+    }
+    const double GMIN = 1e-12; // use 1e-9 only if you still see singular matrices
+    for (int i = 0; i < num_non_ground_nodes; ++i) {
+        A_matrix(i, i) += gmin;
     }
 //    std::cout << "MNA Matrix constructed." << std::endl;
 }
@@ -91,14 +96,25 @@ void MNASolver::initializeMatrix(const Graph& circuitGraph) {
 
     // 2. Check for the existence of a ground node (ID 0). This is critical.
     bool has_ground_node = false;
-    for (Node* node_ptr : all_nodes_in_graph) {
-        if (node_ptr->getId() == 0) {
-            has_ground_node = true;
-            break;
+
+    if (all_nodes_in_graph.empty()) {
+        const auto& elems = circuitGraph.getElements();
+        for (Element* e : elems) {
+            if (!e) continue;
+            if (e->node1 == 0 || e->node2 == 0) has_ground_node = true;
+            if (e->node1 != 0) unique_node_ids.insert(e->node1);
+            if (e->node2 != 0) unique_node_ids.insert(e->node2);
+        }
+    } else {
+        for (Node* n : all_nodes_in_graph) {
+            if (!n) continue;
+            if (n->getId() == 0) has_ground_node = true;
+            else unique_node_ids.insert(n->getId());
         }
     }
-    if (!has_ground_node && !all_nodes_in_graph.empty()) {
-        std::cerr << "Error: No ground node (ID 0) detected in the circuit." << std::endl;
+
+    if (!has_ground_node) {
+        std::cerr << "Error: No ground node (ID 0) detected in the circuit.\n";
         total_unknowns = 0;
         return;
     }
@@ -153,6 +169,10 @@ void MNASolver::initializeMatrix(const Graph& circuitGraph) {
     b_vector.resize(total_unknowns);
     A_matrix.setZero();
     b_vector.setZero();
+
+    std::cerr << "[init] nodes(non-ground): " << unique_node_ids.size()
+              << ", total_unknowns: " << total_unknowns << "\n";
+
 }
 void MNASolver::displayElementCurrents(const Graph& circuitGraph) const {
     std::cout << "\n--- Element Currents (from extra variables) ---" << std::endl;

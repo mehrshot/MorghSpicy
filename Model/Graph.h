@@ -6,19 +6,22 @@
 #define MORGHSPICY_GRAPH_H
 
 #include <stack>
-
+#include "NodeManager.h"
 #include "Common_Includes.h"
 #include "Node.h"
 #include "Edge.h"
 #include "Elements.h"
 
+class NodeManager;
+
 class Graph {
 private:
     std::vector<Node*> nodes;
     std::vector<Edge*> edges;
-    std::vector<Element*> elements;
 
 public:
+    std::vector<Element*> elements;
+
     Graph() = default;
 
     ~Graph() {
@@ -40,6 +43,9 @@ public:
         }
         elements.clear();
     }
+
+    void canonicalizeNodes(const NodeManager& nm);
+
     void displayElementsByType(const std::string& type_filter) {
         std::cout << "Elements of type '" << type_filter << "' in the graph:\n";
         char filter_char = toupper(type_filter[0]);

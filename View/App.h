@@ -52,7 +52,7 @@ private:
     SDL_Renderer* renderer{};
 
     Graph        graph;
-    NodeManager  nodeManager{&graph};
+    NodeManager  nodeManager;
     MNASolver    mnaSolver;
     SimulationRunner simRunner{&graph, &mnaSolver, &nodeManager};
 

@@ -1,97 +1,183 @@
-//
-// Created by Er-Ali on 6/6/2025.
-//
-
 #include "NodeManager.h"
+#include <cstdlib>
+#include <algorithm>
 #include <iostream>
+#include <unordered_set>
+#include <cstdlib>
 
-NodeManager::NodeManager(Graph* g) : graph(g), next_id(1) {
-    name_to_id["0"] = 0;
-    name_to_id["GND"] = 0;
-    id_to_name[0] = "GND"; // UPDATED: Keep reverse map in sync
-    graph->addNode(new Node(0, "GND"));
+static int nextFreeId(const std::unordered_map<int,int>& parent) {
+    // choose the smallest positive integer not used as a key in parent
+    int cand = 1;                 // reserve 0 for ground
+    while (parent.find(cand) != parent.end()) ++cand;
+    return cand;
 }
 
-int NodeManager::getOrCreateNodeId(const std::string& node_name) {
-    if (name_to_id.count(node_name)) {
-        return name_to_id[node_name];
-    }
+NodeManager::NodeManager() {
+    // make sure ground exists and is its own rep
+    parent[0] = 0;
+    rankv[0]  = 1;
 
-    int id = next_id++;
-    name_to_id[node_name] = id;
-    id_to_name[id] = node_name; // UPDATED: Keep reverse map in sync
-    graph->addNode(new Node(id, node_name));
-    return id;
+    // keep friendly aliases
+    idToLabel[0]   = "0";
+    labelToId["0"] = 0;
+    labelToId["gnd"] = 0;
+    labelToId["GND"] = 0;
+
+    // first non-ground id is 1
+    nextId = 1;
 }
 
-void NodeManager::assignNodeAsGND(const std::string& node_name) {
-    if (ground_assigned_by_user) {
-        std::cerr << "Error: Multiple ground nodes defined. Ground is already assigned to '" << id_to_name[0] << "'." << std::endl;
-        return;
-    }
 
-    if (name_to_id.count(node_name) && name_to_id[node_name] != 0) {
-        std::cerr << "Warning: Reassigning existing node \"" << node_name << "\" as GND.\n";
-    }
-    name_to_id[node_name] = 0;
-    id_to_name[0] = node_name;
-    ground_assigned_by_user = true;
-    std::cout << "Node " << node_name << " assigned as GND." << std::endl;
+
+bool NodeManager::isNumber(const std::string& s) {
+    if (s.empty()) return false;
+    char* end=nullptr;
+    std::strtod(s.c_str(), &end);
+    return end == s.c_str() + s.size();
 }
 
-// ADDED: Implementation for displayNodes
+int NodeManager::newNodeId() { return nextId++; }
+
+int NodeManager::findRep(int u) const {
+    if (u == 0) return 0;
+    auto it = parent.find(u);
+    if (it == parent.end()) {
+        parent[u] = u;
+        rankv[u]  = 0;
+        return u;
+    }
+    if (it->second == u) return u;
+    return parent[u] = findRep(it->second);
+}
+
+int NodeManager::unite(int a, int b) {
+    a = findRep(a);
+    b = findRep(b);
+    if (a == b) return a;
+
+    // keep 0 as absolute root
+    if (a == 0) { parent[b] = 0; return 0; }
+    if (b == 0) { parent[a] = 0; return 0; }
+
+    int ra = rankv[a], rb = rankv[b];
+    if (ra < rb) std::swap(a, b);
+    parent[b] = a;
+    if (ra == rb) rankv[a]++;
+    return a;
+}
+
+
+
+int NodeManager::resolveId(const std::string& tok) {
+    // 1) Ground aliases → node 0
+    if (isGroundToken(tok)) return 0;
+
+    // 2) Pure integer string → that numeric id (except "0", already handled)
+    char* end = nullptr;
+    long v = std::strtol(tok.c_str(), &end, 10);
+    if (end && *end == '\0') {
+        int id = static_cast<int>(v);
+        // ensure DSU bookkeeping exists for this numeric node
+        if (!parent.count(id)) parent[id] = id;
+        if (!rankv.count(id))  rankv[id]  = 0;
+        return id;
+    }
+
+    // 3) It’s a label — return existing binding if present
+    auto it = labelToId.find(tok);
+    if (it != labelToId.end()) return it->second;
+
+    // 4) New label → create a fresh node id and bind it
+    int u = nextFreeId(parent);   // smallest unused positive integer
+    parent[u] = u;
+    rankv[u]  = 0;
+    idToLabel[u]   = tok;
+    labelToId[tok] = u;
+    return u;
+}
+
+int NodeManager::labelNode(const std::string& label, int nodeId) {
+    if (isGroundToken(label)) return 0;
+    if (nodeId < 0) nodeId = newNodeId();
+    parent.emplace(nodeId, nodeId);
+    rankv.emplace(nodeId, 0);
+    // If label already exists, short them
+    auto it = labelToId.find(label);
+    if (it != labelToId.end()) nodeId = unite(nodeId, it->second);
+    labelToId[label] = nodeId;
+    idToLabel[nodeId] = label;
+    return findRep(nodeId);
+}
+
+int NodeManager::connect(const std::string& a, const std::string& b) {
+    int ia = resolveId(a);
+    int ib = resolveId(b);
+    int r  = unite(ia, ib);
+    rebuildLabelTable();
+    return r;
+}
+
+std::string NodeManager::nameOf(int nodeId) const {
+    auto it = idToLabel.find(findRep(nodeId));
+    return it == idToLabel.end() ? std::string{} : it->second;
+}
+
+void NodeManager::setLabel(int nodeId, const std::string& label) {
+    if (nodeId == 0 || label.empty()) return;
+    int rep = findRep(nodeId);
+    labelToId[label] = rep;
+    idToLabel[rep]   = label;
+}
+
+int NodeManager::canonical(int u) const { return findRep(u); }
+
+void NodeManager::rebuildLabelTable() {
+    // move labels to canonical reps
+    std::unordered_map<std::string,int> newL2I;
+    std::unordered_map<int,std::string> newI2L;
+    for (auto& kv : labelToId) {
+        int rep = findRep(kv.second);
+        newL2I[kv.first] = rep;
+        // prefer first label assigned to that rep
+        if (!newI2L.count(rep)) newI2L[rep] = kv.first;
+    }
+    labelToId.swap(newL2I);
+    idToLabel.swap(newI2L);
+
+    idToLabel[0] = "0";
+    labelToId["0"]   = 0;
+    labelToId["gnd"] = 0;
+    labelToId["GND"] = 0;
+}
+
+void NodeManager::assignNodeAsGND(const std::string& tok) {
+    connect(tok, "0");
+    rebuildLabelTable();
+}
+
 void NodeManager::displayNodes() const {
-    std::cout << "Available nodes:" << std::endl;
-    if (name_to_id.empty()) {
-        std::cout << "    (No nodes defined yet)" << std::endl;
-        return;
-    }
-    std::vector<std::string> node_names;
-    for (const auto& pair : name_to_id) {
-        if (pair.first == "0" && name_to_id.count("GND")) continue;
-        node_names.push_back(pair.first);
-    }
-    std::sort(node_names.begin(), node_names.end());
+    // show canonical id and its (first) label if any
+    std::cout << "Nodes (canonical rep -> label):\n";
+    // Collect all known ids (parents + label binded ids)
+    std::unordered_set<int> ids;
+    for (auto& kv : parent) ids.insert(kv.first);
+    for (auto& kv : labelToId) ids.insert(kv.second);
+    ids.insert(0);
 
-    for (const std::string& name : node_names) {
-        std::cout << "    " << name << std::endl;
+    for (int u : ids) {
+        int r = findRep(u);
+        auto it = idToLabel.find(r);
+        std::string label = (it == idToLabel.end() ? "" : it->second);
+        std::cout << "  " << r << (label.empty() ? "" : ("  (" + label + ")")) << "\n";
     }
 }
 
-// ADDED: Implementation for renameNode
-bool NodeManager::renameNode(const std::string& old_name, const std::string& new_name) {
-    if (!name_to_id.count(old_name)) {
-        std::cerr << "ERROR: Node '" << old_name << "' does not exist in the circuit" << std::endl;
-        return false;
-    }
-
-    if (name_to_id.count(new_name)) {
-        std::cerr << "ERROR: Node name '" << new_name << "' already exists." << std::endl;
-        return false;
-    }
-
-    int node_id = name_to_id[old_name];
-
-    name_to_id.erase(old_name);
-    name_to_id[new_name] = node_id;
-
-    id_to_name[node_id] = new_name;
-
-    for(Node* node : graph->getNodes()){
-        if(node->getId() == node_id){
-            // This part requires a setter in Node.h, let's assume it exists or add it.
-            // node->setName(new_name);
-        }
-    }
-
-    std::cout << "SUCCESS: Node renamed from '" << old_name << "' to '" << new_name << "'." << std::endl;
-    return true;
+void NodeManager::renameNode(const std::string& oldLabel, const std::string& newLabel) {
+    int id = resolveId(oldLabel);
+    setLabel(id, newLabel);
+    rebuildLabelTable();
 }
 
-std::string NodeManager::getNodeNameById(int id) const {
-    if (id_to_name.count(id)) {
-        return id_to_name.at(id);
-    }
-    return "INVALID_NODE";
+bool NodeManager::isGroundToken(const std::string& s) {
+    return (s == "0" || s == "gnd" || s == "GND");
 }
-

@@ -10,6 +10,9 @@
 #include "Controller/SimulationRunner.h"
 #include <functional>
 
+class Graph;
+class NodeManager;
+class SimulationRunner;
 
 class CommandParser {
 private:
@@ -24,10 +27,16 @@ private:
     void cmd_scope_load(const std::vector<std::string>& tokens);
     void cmd_scope_clear();
 
+    // helpers
+    int nodeFromToken(const std::string& tok); // delegates to nm->resolveId
+    void handleLabel(std::istringstream& in);
+    void handleConnect(std::istringstream& in);
+
 public:
 
     CommandParser();  // <- DECLARE default ctor (you define it in .cpp)
-    CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner);
+
+    CommandParser(Graph* g, NodeManager* n, SimulationRunner* r);
 
     // Optional callbacks for scope->App bridge (set these in App if you want)
     std::function<void(const std::string& path, double Fs, double tStop, int chunk)> onScopeLoad;
@@ -36,7 +45,6 @@ public:
 // New wrapper that adds 'scope' commands then falls back to your legacy parser
     void parseCommand(const std::string& line);
 
-// Rename your old parseCommand(...) body to this:
     void parseCommandCore(const std::string& line);
 
 };

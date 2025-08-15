@@ -25,6 +25,8 @@ private:
 
     std::map<int, int> node_id_to_matrix_idx;
 
+    double gmin = 1e-12;
+    bool   skipDC = false;
 public:
     MNASolver();
     ~MNASolver() = default;
@@ -54,6 +56,10 @@ public:
     void displaySolution() const;
     void displayNodeVoltages() const;
     void displayElementCurrents(const Graph& circuitGraph) const;
+
+    bool hasUnknowns() const { return total_unknowns > 0; }
+    void setGmin(double g)   { gmin = g; }
+    void setSkipDC(bool s)   { skipDC = s; }
 };
 
 #endif //MORGHSPICY_MNASOLVER_H

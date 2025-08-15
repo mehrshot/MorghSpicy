@@ -11,17 +11,28 @@
 const int MAX_NR_ITERATIONS = 100;
 const double NR_TOLERANCE = 1e-6;
 
-SimulationRunner::SimulationRunner(Graph* g, MNASolver* solver, NodeManager* nm)
-        : graph(g), mnaSolver(solver), nodeManager(nm) {}
+SimulationRunner::SimulationRunner(Graph* g, MNASolver* solver, NodeManager* n)
+        : graph(g), mnaSolver(solver), nm(n) {}
 
 PlotData SimulationRunner::runTransient(double tstep_initial, double tstop, double tmaxstep, const std::vector<OutputVariable>& requested_vars) {
     PlotData plotData;
     mnaSolver->initializeMatrix(*graph);
 
+    graph->canonicalizeNodes(*nm);
+
+    nm->displayNodes();
+    for (auto& e : graph->elements) {        // adjust if accessor differs
+        const Element* el = e;         // or `e` if you store raw pointers
+        std::cout << el->name << ": (" << el->node1 << ", " << el->node2 << ")\n";
+    }
+
+
+    mnaSolver->initializeMatrix(*graph);
+
     // Initial sanity checks
     if (mnaSolver->getTotalUnknowns() == 0 || !graph->isConnected()) {
-        std::cerr << "Error: Simulation cannot run, circuit is not correctly defined or is disconnected." << std::endl;
-        return plotData;
+        std::cerr << "[WARN] Pre-check failed; attempting transient-only with gmin.\n";
+        // DO NOT return; let the code proceed to build the transient MNA and step
     }
 
     // --- Optimization: Pre-resolve output variable getters ---
@@ -33,7 +44,7 @@ PlotData SimulationRunner::runTransient(double tstep_initial, double tstop, doub
         plotData.data_series.emplace_back();
 
         if (var.type == OutputVariable::VOLTAGE) {
-            int node_id = nodeManager->getOrCreateNodeId(var.name);
+            int node_id = nm->resolveId(var.name);
             if (node_id != -1 && mnaSolver->getNodeToMatrixIdxMap().count(node_id)) {
                 int matrix_idx = mnaSolver->getNodeToMatrixIdxMap().at(node_id);
                 value_getters.push_back([matrix_idx](const Eigen::VectorXd& sol, const Eigen::VectorXd&, double) {
@@ -107,6 +118,10 @@ PlotData SimulationRunner::runTransient(double tstep_initial, double tstop, doub
 }
 void SimulationRunner::runDCSweep(const std::string& sourceName, double start, double stop, double increment, const std::vector<OutputVariable>& requested_vars) {
     mnaSolver->initializeMatrix(*graph);
+
+    graph->canonicalizeNodes(*nm);
+    mnaSolver->initializeMatrix(*graph);
+
 
     if (mnaSolver->getTotalUnknowns() == 0) {
         std::cerr << "Error: Simulation cannot run, the circuit is not correctly defined." << std::endl;

@@ -9,8 +9,8 @@
 
 CommandParser::CommandParser() = default;
 
-CommandParser::CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner)
-        : graph(g), nodeManager(nm), simRunner(runner) {}
+CommandParser::CommandParser(Graph* g, NodeManager* n, SimulationRunner* r)
+        : graph(g), nodeManager(n), simRunner(r) {}
 
 bool isNumber(const std::string& s) {
     std::regex pattern(R"(^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$)");
@@ -156,8 +156,8 @@ void CommandParser::parseCommandCore(const std::string& line) {
             double pw = parseValueWithPrefix(param_tokens[5]);
             double per = parseValueWithPrefix(param_tokens[6]);
 
-            int n1 = nodeManager->getOrCreateNodeId(n1_str);
-            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+            int n1 = nodeManager->resolveId(n1_str);
+            int n2 = nodeManager->resolveId(n2_str);
 
             graph->addElement(new PulseSource(name, n1, n2, v1, v2, td, tr, tf, pw, per));
             std::cout << "Added pulse source: " << name << std::endl;
@@ -179,8 +179,8 @@ void CommandParser::parseCommandCore(const std::string& line) {
                 std::cerr << "Error: Model " << model << " not found in library\n";
                 return;
             }
-            int n1 = nodeManager->getOrCreateNodeId(n1_str);
-            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+            int n1 = nodeManager->resolveId(n1_str);
+            int n2 = nodeManager->resolveId(n2_str);
             graph->addElement(new Diode(name, n1, n2, model));
             std::cout << "Added diode: " << name << std::endl;
             return;
@@ -197,10 +197,10 @@ void CommandParser::parseCommandCore(const std::string& line) {
                 std::cerr << "Error: Invalid gain value\n";
                 return;
             }
-            int n1 = nodeManager->getOrCreateNodeId(n1_str);
-            int n2 = nodeManager->getOrCreateNodeId(n2_str);
-            int c1 = nodeManager->getOrCreateNodeId(c1_str);
-            int c2 = nodeManager->getOrCreateNodeId(c2_str);
+            int n1 = nodeManager->resolveId(n1_str);
+            int n2 = nodeManager->resolveId(n2_str);
+            int c1 = nodeManager->resolveId(c1_str);
+            int c2 = nodeManager->resolveId(c2_str);
             Element* e = nullptr;
             if (type == 'G') {
                 e = new vccs(name, n1, n2, c1, c2, gain);
@@ -223,8 +223,8 @@ void CommandParser::parseCommandCore(const std::string& line) {
                 std::cerr << "Error: Invalid gain value\n";
                 return;
             }
-            int n1 = nodeManager->getOrCreateNodeId(n1_str);
-            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+            int n1 = nodeManager->resolveId(n1_str);
+            int n2 = nodeManager->resolveId(n2_str);
             Element* e = nullptr;
             if (type == 'F') {
                 e = new cccs(name, n1, n2, ctrl_name, gain);
@@ -252,8 +252,8 @@ void CommandParser::parseCommandCore(const std::string& line) {
                 phase = parseValueWithPrefix(optional);
             }
 
-            int n1 = nodeManager->getOrCreateNodeId(n1_str);
-            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+            int n1 = nodeManager->resolveId(n1_str);
+            int n2 = nodeManager->resolveId(n2_str);
 
             Element* e = new SinusoidalSource(name, n1, n2, voffset, vamp, freq, phase);
             graph->addElement(e);
@@ -278,8 +278,8 @@ void CommandParser::parseCommandCore(const std::string& line) {
             return;
         }
 
-        int n1 = nodeManager->getOrCreateNodeId(n1_str);
-        int n2 = nodeManager->getOrCreateNodeId(n2_str);
+        int n1 = nodeManager->resolveId(n1_str);
+        int n2 = nodeManager->resolveId(n2_str);
         Element* e = nullptr;
         switch (type) {
             case 'R': e = new Resistor(name, n1, n2, value); break;
@@ -384,6 +384,13 @@ void CommandParser::parseCommand(const std::string& line) {
         while (iss >> w) out.push_back(w);
         return out;
     };
+
+    std::istringstream in(line);
+    std::string cmd;
+    if (!(in >> cmd)) return;
+
+    if (cmd == "label") { handleLabel(in); return; }
+    if (cmd == "connect" || cmd == "short") { handleConnect(in); return; }
 
     const auto parts = split_ws(line);
     if (!parts.empty() && parts[0] == "scope") {
@@ -645,3 +652,34 @@ void CommandParser::handleSaveCommand(std::istringstream& iss) {
     outfile.close();
     std::cout << "SUCCESS: Circuit saved to " << final_path.string() << std::endl;
 }
+
+int CommandParser::nodeFromToken(const std::string& tok) {
+    return nodeManager->resolveId(tok);
+}
+
+void CommandParser::handleLabel(std::istringstream& in) {
+    // syntax 1:  label <node|label> <name>
+    // syntax 2:  label <name>             (creates a new isolated node with that name)
+    std::string a, b;
+    if (!(in >> a)) { std::cout << "usage: label <node|label> <name>\n"; return; }
+    if (!(in >> b)) { // single token => create fresh node with that label
+        nodeManager->labelNode(a);
+        graph->canonicalizeNodes(*nodeManager);
+        std::cout << "labeled new node as " << a << "\n";
+        return;
+    }
+    int id = nodeManager->resolveId(a);
+    nodeManager->setLabel(id, b);
+    graph->canonicalizeNodes(*nodeManager);
+    std::cout << "labeled node " << id << " as " << b << "\n";
+}
+
+void CommandParser::handleConnect(std::istringstream& in) {
+    // connect two names or numbers: connect vdd net1
+    std::string a,b;
+    if (!(in >> a >> b)) { std::cout << "usage: connect <a> <b>\n"; return; }
+    int rep = nodeManager->connect(a,b);
+    graph->canonicalizeNodes(*nodeManager);
+    std::cout << "connected; rep = " << rep << "\n";
+}
+
