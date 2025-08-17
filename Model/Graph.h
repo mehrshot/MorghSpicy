@@ -6,19 +6,22 @@
 #define MORGHSPICY_GRAPH_H
 
 #include <stack>
-
+#include "NodeManager.h"
 #include "Common_Includes.h"
 #include "Node.h"
 #include "Edge.h"
 #include "Elements.h"
 
+class NodeManager;
+
 class Graph {
 private:
     std::vector<Node*> nodes;
     std::vector<Edge*> edges;
-    std::vector<Element*> elements;
 
 public:
+    std::vector<Element*> elements;
+
     Graph() = default;
 
     ~Graph() {
@@ -40,6 +43,9 @@ public:
         }
         elements.clear();
     }
+
+    void canonicalizeNodes(const NodeManager& nm);
+
     void displayElementsByType(const std::string& type_filter) {
         std::cout << "Elements of type '" << type_filter << "' in the graph:\n";
         char filter_char = toupper(type_filter[0]);
@@ -52,6 +58,17 @@ public:
         }
         if (!found) {
             std::cout << "No elements of type '" << type_filter << "' found.\n";
+        }
+    }
+
+    void updateTimeDependentSources(double time) {
+        for (Element* elem : elements) {
+            // Attempt to cast to each type of time-dependent source
+            if (auto* pulse_src = dynamic_cast<PulseSource*>(elem)) {
+                pulse_src->updateTime(time);
+            } else if (auto* sin_src = dynamic_cast<SinusoidalSource*>(elem)) {
+                sin_src->updateTime(time);
+            }
         }
     }
 
@@ -161,22 +178,6 @@ public:
         return false;
     }
 
-};
-
-class Circuit {
-private:
-    std::vector<Element*> elements;
-
-public:
-    void addElement(Element* e) {
-        elements.push_back(e);
-    }
-
-    void displayElements() {
-        for (auto e : elements) {
-            e->display();
-        }
-    }
 };
 
 #endif // MORGHSPICY_GRAPH_H

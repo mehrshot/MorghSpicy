@@ -1,0 +1,277 @@
+//
+// Created by Mehrshad on 8/9/2025.
+//
+
+#include <iostream>
+#include <algorithm>
+#include <SDL3/SDL.h>
+
+#include "View/App.h"
+#include "Controller/CommandParser.h"
+#include "Controller/SimulationRunner.h"
+#include "Model/NodeManager.h"
+#include "Model/Elements.h"
+
+// ----- helpers (declared also in header) -----
+std::vector<Point> App::combineSameGrid(const std::vector<Point>& a,
+                                        const std::vector<Point>& b,
+                                        double K, char op) {
+    const size_t n = std::min(a.size(), b.size());
+    std::vector<Point> out; out.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+        const double y = (op == '+') ? (a[i].y + b[i].y) : (a[i].y - b[i].y);
+        out.push_back({ a[i].x, K * y });
+    }
+    return out;
+}
+
+std::vector<Point> App::scaleSeries(const std::vector<Point>& a, double K) {
+    std::vector<Point> out; out.reserve(a.size());
+    for (const auto& p : a) out.push_back({ p.x, K * p.y });
+    return out;
+}
+
+static std::vector<Point> toSeries(const std::vector<double>& xs,
+                                   const std::vector<double>& ys) {
+    std::vector<Point> out;
+    const size_t n = std::min(xs.size(), ys.size());
+    out.reserve(n);
+    for (size_t i = 0; i < n; ++i) out.push_back({ xs[i], ys[i] });
+    return out;
+}
+
+// ---------------------------------------------------------------
+
+App::App() : simRunner(&graph, &mnaSolver, &nodeManager) {}
+
+bool App::init() {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {               // SDL3: returns bool
+        std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
+        return false;
+    }
+
+    window = SDL_CreateWindow("MorghSpicy", 900, 650, SDL_WINDOW_RESIZABLE);
+    if (!window) {
+        std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << "\n";
+        return false;
+    }
+    SDL_SetWindowPosition(window, 100, 100);
+
+    renderer = SDL_CreateRenderer(window, nullptr);
+    if (!renderer) {
+        std::cerr << "SDL_CreateRenderer failed: " << SDL_GetError() << "\n";
+        return false;
+    }
+
+    isRunning = true;
+    return true;
+}
+
+void App::cleanup() {
+    if (renderer) { SDL_DestroyRenderer(renderer); renderer = nullptr; }
+    if (window)   { SDL_DestroyWindow(window);     window   = nullptr; }
+    SDL_Quit();
+}
+
+void App::showPlot(const PlotData& pd) {
+    plotter.clear();
+    for (size_t k = 0; k < pd.data_series.size(); ++k) {
+        plotter.addSeries(
+                (k < pd.series_names.size() ? pd.series_names[k] : "sig_" + std::to_string(k)),
+                toSeries(pd.time_axis, pd.data_series[k])
+        );
+    }
+}
+
+void App::loadAndPlotSignal(const std::string& path, double Fs, double tStop, int chunkSize) {
+    Signal s(path, Fs, tStop, chunkSize);
+    auto pairs = s.readAllAsPoints();  // internally chunked, but returns full (t,y)
+    std::vector<Point> pts; pts.reserve(pairs.size());
+    for (auto& pr : pairs) pts.push_back({ pr.first, pr.second });
+    plotter.addSeries(path, pts);
+    std::cout << "[Signal] Loaded: " << pts.size() << " samples\n";
+}
+
+void App::loadAndPlotSignal(const std::string& path, double Fs, double tStop, int chunkSize, bool byChunks) {
+    if (!byChunks) { loadAndPlotSignal(path, Fs, tStop, chunkSize); return; }
+
+    // Demo streaming: load only the first chunk
+    Signal s(path, Fs, tStop, chunkSize);
+    if (!s.open()) { std::cerr << "[Signal] Cannot open: " << path << "\n"; return; }
+    std::vector<std::pair<double,double>> pairs;
+    if (s.readNextChunk()) s.appendCurrentChunkAsPoints(pairs, 0.0);
+    s.close();
+
+    std::vector<Point> pts; pts.reserve(pairs.size());
+    for (auto& pr : pairs) pts.push_back({ pr.first, pr.second });
+    plotter.addSeries(path + " (chunk)", pts);
+    std::cout << "[Signal] Loaded first chunk: " << pts.size() << " samples (chunk=" << chunkSize << ")\n";
+}
+
+void App::handleEvents() {
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+        if (e.type == SDL_EVENT_QUIT) isRunning = false;
+
+        // Give all input to the plotter (zoom/pan/auto-zoom/cursors/selection)
+        plotter.handleEvent(e);
+
+        if (e.type == SDL_EVENT_WINDOW_RESIZED) {
+            int w = 0, h = 0;
+            SDL_GetWindowSizeInPixels(window, &w, &h);
+            plotter = Plotter(SDL_FRect{60.f, 40.f, float(w - 120), float(h - 100)});
+        }
+
+        if (e.type == SDL_EVENT_KEY_DOWN) {
+            switch (e.key.key) {
+                case SDLK_ESCAPE: isRunning = false; break;
+
+                    // -------- Load a text signal file (1 value per line) ----------
+                case SDLK_L: {
+                    loadAndPlotSignal(sigui.lastPath, sigui.Fs, sigui.tStop, sigui.chunkSz, sigui.byChunks);
+                } break;
+
+                    // Toggle chunked demo (load only first chunk)
+                case SDLK_S: {
+                    sigui.byChunks = !sigui.byChunks;
+                    std::cout << "[Signal] byChunks = " << (sigui.byChunks ? "true" : "false") << "\n";
+                } break;
+
+                    // Re-run transient quickly (R)
+                case SDLK_R: {
+                    double stopTime        = 0.05;
+                    double initialTimestep = 1e-5;
+                    double maxTimestep     = 1e-3;
+                    std::vector<OutputVariable> vars = {
+                            {OutputVariable::VOLTAGE, "N2"}    // adjust to your node names
+                    };
+                    PlotData pd = simRunner.runTransient(initialTimestep, stopTime, maxTimestep, vars);
+                    showPlot(pd);
+                } break;
+
+                    // ---- Scope math: M=sum last two, N=diff last two, K=scale last ----
+                case SDLK_M: {
+                    const auto& ss = plotter.debugSeries();
+                    if (ss.size() >= 2) {
+                        auto C = combineSameGrid(ss[ss.size()-2].points, ss.back().points, 1.0, '+');
+                        plotter.addSeries(ss[ss.size()-2].name + "_plus_" + ss.back().name, C);
+                        std::cout << "[Scope] sum added\n";
+                    }
+                } break;
+                case SDLK_N: {
+                    const auto& ss = plotter.debugSeries();
+                    if (ss.size() >= 2) {
+                        auto C = combineSameGrid(ss[ss.size()-2].points, ss.back().points, 1.0, '-');
+                        plotter.addSeries(ss[ss.size()-2].name + "_minus_" + ss.back().name, C);
+                        std::cout << "[Scope] diff added\n";
+                    }
+                } break;
+                case SDLK_K: {
+                    const auto& ss = plotter.debugSeries();
+                    if (!ss.empty()) {
+                        const double K = 2.0; // simple default
+                        auto S = scaleSeries(ss.back().points, K);
+                        plotter.addSeries(ss.back().name + "_x2", S);
+                        std::cout << "[Scope] scaled x2\n";
+                    }
+                } break;
+
+                    // ---- Series selection 1–9, visibility (V), remove (Del), legend (G) ----
+                case SDLK_1: case SDLK_2: case SDLK_3:
+                case SDLK_4: case SDLK_5: case SDLK_6:
+                case SDLK_7: case SDLK_8: case SDLK_9: {
+                    int digit = 0;
+                    switch (e.key.key) {
+                        case SDLK_1: digit = 1; break; case SDLK_2: digit = 2; break; case SDLK_3: digit = 3; break;
+                        case SDLK_4: digit = 4; break; case SDLK_5: digit = 5; break; case SDLK_6: digit = 6; break;
+                        case SDLK_7: digit = 7; break; case SDLK_8: digit = 8; break; case SDLK_9: digit = 9; break;
+                    }
+                    size_t idx = (digit > 0) ? (size_t)(digit - 1) : 0;
+                    if (plotter.selectByIndex(idx)) {
+                        std::cout << "[Legend] selected #" << digit << " -> " << plotter.getSelectedName() << "\n";
+                    }
+                } break;
+                case SDLK_V: {
+                    if (plotter.toggleSelectedVisibility())
+                        std::cout << "[Legend] toggled visibility\n";
+                } break;
+                case SDLK_DELETE: {
+                    if (plotter.removeSelected())
+                        std::cout << "[Legend] removed selected series\n";
+                } break;
+                case SDLK_G: {
+                    plotter.setLegendVisible(!plotter.isLegendVisible());
+                } break;
+                default: break;
+            }
+        }
+    }
+}
+
+void App::update() {
+    // future: animations/continuous sim
+}
+
+void App::render() {
+    SDL_SetRenderDrawColor(renderer, 245,245,245,255);
+    SDL_RenderClear(renderer);
+
+    plotter.render(renderer);
+
+    // Optional: cursor readouts in console
+    if (auto x1 = plotter.getCursor1X()) {
+        if (auto x2 = plotter.getCursor2X()) {
+            double dt = *x2 - *x1;
+            std::cout << "[Cursors] Δt = " << dt << " s";
+            const auto& ss = plotter.debugSeries();
+            if (!ss.empty() && !ss.back().points.empty()) {
+                const auto& pts = ss.back().points;
+                auto at = [&](double x){
+                    auto it = std::lower_bound(pts.begin(), pts.end(), x,
+                                               [](const Point& p, double xv){ return p.x < xv; });
+                    if (it == pts.end()) --it;
+                    return it->y;
+                };
+                double dy = at(*x2) - at(*x1);
+                std::cout << ", Δy(" << ss.back().name << ") = " << dy;
+            }
+            std::cout << "\n";
+        }
+    }
+
+    SDL_RenderPresent(renderer);
+}
+
+int App::run() {
+    if (!init()) return -1;
+
+    // Load a starting netlist via your command parser (adjust path)
+    {
+        CommandParser parser(&graph, &nodeManager, &simRunner);
+        parser.onScopeLoad = [this](const std::string& p, double Fs, double t, int c){
+            this->loadAndPlotSignal(p, Fs, t, c);
+        };
+        parser.onScopeClear = [this](){ this->plotter.clear(); };
+        parser.parseCommand("load schematics/rc_step.txt");
+
+        // Run once so there's a plot on screen
+        double stopTime        = 0.05;
+        double initialTimestep = 1e-5;
+        double maxTimestep     = 1e-3;
+        std::vector<OutputVariable> vars = {
+                {OutputVariable::VOLTAGE, "N2"}
+        };
+        PlotData pd = simRunner.runTransient(initialTimestep, stopTime, maxTimestep, vars);
+        showPlot(pd);
+    }
+
+    while (isRunning) {
+        handleEvents();
+        update();
+        render();
+        SDL_Delay(10);
+    }
+
+    cleanup();
+    return 0;
+}

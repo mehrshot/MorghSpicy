@@ -1,18 +1,16 @@
 // Created by Ali-Er on 6/6/2025.
 
 #include "CommandParser.h"
+#include "Model/Graph.h"
+#include "Model/NodeManager.h"
+#include "Controller/SimulationRunner.h"
 #include <sstream>
 #include <iostream>
-#include <cctype>
-#include <unordered_set>
-#include <regex>
-#include <fstream>
-#include <string>
-#include <vector>
-#include <filesystem>
 
-CommandParser::CommandParser(Graph* g, NodeManager* nm, SimulationRunner* runner)
-        : graph(g), nodeManager(nm), simRunner(runner) {}
+CommandParser::CommandParser() = default;
+
+CommandParser::CommandParser(Graph* g, NodeManager* n, SimulationRunner* r)
+        : graph(g), nodeManager(n), simRunner(r) {}
 
 bool isNumber(const std::string& s) {
     std::regex pattern(R"(^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$)");
@@ -46,7 +44,7 @@ double parseValueWithPrefix(const std::string& str) {
     }
 }
 
-void CommandParser::parseCommand(const std::string& line) {
+void CommandParser::parseCommandCore(const std::string& line) {
     std::istringstream iss(line);
     std::string cmd;
     iss >> cmd;
@@ -107,6 +105,44 @@ void CommandParser::parseCommand(const std::string& line) {
                 param_tokens.push_back(tok);
             }
 
+            // minimal whitespace split (local helper is fine too)
+            auto split_ws = [](const std::string& s){
+                std::vector<std::string> out; std::string w; std::istringstream iss(s);
+                while (iss >> w) out.push_back(w);
+                return out;
+            };
+
+            std::vector<std::string> parts = split_ws(line);
+            if (!parts.empty() && parts[0] == "scope") {
+                // scope load path=<file> Fs=10000 t=0.1 chunk=8192
+                // scope clear
+                if (parts.size() >= 2 && parts[1] == "load") {
+                    std::string path;
+                    double Fs = 1000.0, tStop = 1.0;
+                    int chunk = 4096;
+                    for (size_t i = 2; i < parts.size(); ++i) {
+                        auto& s = parts[i];
+                        auto eq = s.find('=');
+                        if (eq == std::string::npos) continue;
+                        auto k = s.substr(0, eq);
+                        auto v = s.substr(eq + 1);
+                        if (k == "path") path = v;
+                        else if (k == "Fs") Fs = std::stod(v);
+                        else if (k == "t") tStop = std::stod(v);
+                        else if (k == "chunk") chunk = std::stoi(v);
+                    }
+                    // hook this into App if you already added callbacks; otherwise just echo:
+                    std::cout << "[scope] load path=" << path << " Fs=" << Fs
+                              << " t=" << tStop << " chunk=" << chunk << "\n";
+                    return; // prevent the rest of your parser from re-handling "scope"
+                }
+                if (parts.size() >= 2 && parts[1] == "clear") {
+                    std::cout << "[scope] clear\n";
+                    return;
+                }
+            }
+
+
             if (param_tokens.size() != 7) {
                 std::cerr << "Error: Incorrect PULSE parameters. Expected: PULSE(v1 v2 td tr tf pw per)" << std::endl;
                 return;
@@ -120,8 +156,8 @@ void CommandParser::parseCommand(const std::string& line) {
             double pw = parseValueWithPrefix(param_tokens[5]);
             double per = parseValueWithPrefix(param_tokens[6]);
 
-            int n1 = nodeManager->getOrCreateNodeId(n1_str);
-            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+            int n1 = nodeManager->resolveId(n1_str);
+            int n2 = nodeManager->resolveId(n2_str);
 
             graph->addElement(new PulseSource(name, n1, n2, v1, v2, td, tr, tf, pw, per));
             std::cout << "Added pulse source: " << name << std::endl;
@@ -143,8 +179,8 @@ void CommandParser::parseCommand(const std::string& line) {
                 std::cerr << "Error: Model " << model << " not found in library\n";
                 return;
             }
-            int n1 = nodeManager->getOrCreateNodeId(n1_str);
-            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+            int n1 = nodeManager->resolveId(n1_str);
+            int n2 = nodeManager->resolveId(n2_str);
             graph->addElement(new Diode(name, n1, n2, model));
             std::cout << "Added diode: " << name << std::endl;
             return;
@@ -161,10 +197,10 @@ void CommandParser::parseCommand(const std::string& line) {
                 std::cerr << "Error: Invalid gain value\n";
                 return;
             }
-            int n1 = nodeManager->getOrCreateNodeId(n1_str);
-            int n2 = nodeManager->getOrCreateNodeId(n2_str);
-            int c1 = nodeManager->getOrCreateNodeId(c1_str);
-            int c2 = nodeManager->getOrCreateNodeId(c2_str);
+            int n1 = nodeManager->resolveId(n1_str);
+            int n2 = nodeManager->resolveId(n2_str);
+            int c1 = nodeManager->resolveId(c1_str);
+            int c2 = nodeManager->resolveId(c2_str);
             Element* e = nullptr;
             if (type == 'G') {
                 e = new vccs(name, n1, n2, c1, c2, gain);
@@ -187,8 +223,8 @@ void CommandParser::parseCommand(const std::string& line) {
                 std::cerr << "Error: Invalid gain value\n";
                 return;
             }
-            int n1 = nodeManager->getOrCreateNodeId(n1_str);
-            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+            int n1 = nodeManager->resolveId(n1_str);
+            int n2 = nodeManager->resolveId(n2_str);
             Element* e = nullptr;
             if (type == 'F') {
                 e = new cccs(name, n1, n2, ctrl_name, gain);
@@ -216,8 +252,8 @@ void CommandParser::parseCommand(const std::string& line) {
                 phase = parseValueWithPrefix(optional);
             }
 
-            int n1 = nodeManager->getOrCreateNodeId(n1_str);
-            int n2 = nodeManager->getOrCreateNodeId(n2_str);
+            int n1 = nodeManager->resolveId(n1_str);
+            int n2 = nodeManager->resolveId(n2_str);
 
             Element* e = new SinusoidalSource(name, n1, n2, voffset, vamp, freq, phase);
             graph->addElement(e);
@@ -242,8 +278,8 @@ void CommandParser::parseCommand(const std::string& line) {
             return;
         }
 
-        int n1 = nodeManager->getOrCreateNodeId(n1_str);
-        int n2 = nodeManager->getOrCreateNodeId(n2_str);
+        int n1 = nodeManager->resolveId(n1_str);
+        int n2 = nodeManager->resolveId(n2_str);
         Element* e = nullptr;
         switch (type) {
             case 'R': e = new Resistor(name, n1, n2, value); break;
@@ -338,6 +374,62 @@ void CommandParser::parseCommand(const std::string& line) {
     else {
         std::cerr << "Error: Unknown command: " << cmd << std::endl;
     }
+}
+
+void CommandParser::parseCommand(const std::string& line) {
+    // --- Minimal, safe whitespace tokenizer ---
+    auto split_ws = [](const std::string& s){
+        std::vector<std::string> out; out.reserve(8);
+        std::istringstream iss(s); std::string w;
+        while (iss >> w) out.push_back(w);
+        return out;
+    };
+
+    std::istringstream in(line);
+    std::string cmd;
+    if (!(in >> cmd)) return;
+
+    if (cmd == "label") { handleLabel(in); return; }
+    if (cmd == "connect" || cmd == "short") { handleConnect(in); return; }
+
+    const auto parts = split_ws(line);
+    if (!parts.empty() && parts[0] == "scope") {
+        // scope load path=<file> Fs=10000 t=0.1 chunk=8192
+        // scope clear
+        if (parts.size() >= 2 && parts[1] == "load") {
+            std::string path;
+            double Fs   = 1000.0;
+            double tStop= 1.0;
+            int    chunk= 4096;
+
+            for (size_t i = 2; i < parts.size(); ++i) {
+                const auto& s = parts[i];
+                const auto  eq = s.find('=');
+                if (eq == std::string::npos) continue;
+                const auto  k = s.substr(0, eq);
+                const auto  v = s.substr(eq + 1);
+                if      (k == "path")  path  = v;
+                else if (k == "Fs")    Fs    = std::stod(v);
+                else if (k == "t")     tStop = std::stod(v);
+                else if (k == "chunk") chunk = std::stoi(v);
+            }
+
+            if (onScopeLoad) onScopeLoad(path, Fs, tStop, chunk);
+            else std::cout << "[scope] load path=" << path << " Fs=" << Fs
+                           << " t=" << tStop << " chunk=" << chunk
+                           << " (no callback wired)\n";
+            return; // handled
+        }
+        if (parts.size() >= 2 && parts[1] == "clear") {
+            if (onScopeClear) onScopeClear();
+            else std::cout << "[scope] clear (no callback wired)\n";
+            return; // handled
+        }
+        // Unknown scope subcommand -> fall through to legacy
+    }
+
+    // Not a 'scope' command (or unknown subcmd): use your original parser
+    parseCommandCore(line);
 }
 
 void CommandParser::handlePrintCommand(std::istringstream& iss) {
@@ -560,3 +652,34 @@ void CommandParser::handleSaveCommand(std::istringstream& iss) {
     outfile.close();
     std::cout << "SUCCESS: Circuit saved to " << final_path.string() << std::endl;
 }
+
+int CommandParser::nodeFromToken(const std::string& tok) {
+    return nodeManager->resolveId(tok);
+}
+
+void CommandParser::handleLabel(std::istringstream& in) {
+    // syntax 1:  label <node|label> <name>
+    // syntax 2:  label <name>             (creates a new isolated node with that name)
+    std::string a, b;
+    if (!(in >> a)) { std::cout << "usage: label <node|label> <name>\n"; return; }
+    if (!(in >> b)) { // single token => create fresh node with that label
+        nodeManager->labelNode(a);
+        graph->canonicalizeNodes(*nodeManager);
+        std::cout << "labeled new node as " << a << "\n";
+        return;
+    }
+    int id = nodeManager->resolveId(a);
+    nodeManager->setLabel(id, b);
+    graph->canonicalizeNodes(*nodeManager);
+    std::cout << "labeled node " << id << " as " << b << "\n";
+}
+
+void CommandParser::handleConnect(std::istringstream& in) {
+    // connect two names or numbers: connect vdd net1
+    std::string a,b;
+    if (!(in >> a >> b)) { std::cout << "usage: connect <a> <b>\n"; return; }
+    int rep = nodeManager->connect(a,b);
+    graph->canonicalizeNodes(*nodeManager);
+    std::cout << "connected; rep = " << rep << "\n";
+}
+
