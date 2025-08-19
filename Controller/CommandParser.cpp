@@ -6,6 +6,8 @@
 #include "Controller/SimulationRunner.h"
 #include <sstream>
 #include <iostream>
+#include <fstream>
+#include <map>
 
 CommandParser::CommandParser() = default;
 
@@ -54,6 +56,20 @@ void CommandParser::parseCommandCore(const std::string& line) {
         if (!(iss >> name)) {
             std::cerr << "Error: Syntax error\n";
             return;
+        }
+        std::string subcircuit_path = "library/" + name + ".sub";
+        std::ifstream sub_file(subcircuit_path);
+
+        if (sub_file.is_open()) {
+            sub_file.close(); // We only needed to check for existence
+            std::string n1_str, n2_str;
+            if (!(iss >> n1_str >> n2_str)) {
+                std::cerr << "Error: Syntax for adding subcircuit is 'add <InstanceName> <Node1> <Node2>'" << std::endl;
+                return;
+            }
+            // Call the helper function to perform the flattening logic
+            handleAddComponent(name, n1_str, n2_str);
+            return; // IMPORTANT: Exit the function after handling the subcircuit
         }
 
         char type = name[0];
@@ -167,6 +183,7 @@ void CommandParser::parseCommandCore(const std::string& line) {
             // If it wasn't a PULSE source, go back to the original position in the stream
             iss.seekg(original_pos);
         }
+
 
         if (type == 'D') {
             std::string model;
@@ -371,10 +388,25 @@ void CommandParser::parseCommandCore(const std::string& line) {
     else if (cmd == "save") {
         handleSaveCommand(iss);
     }
-    else {
+    else if (cmd == "subcircuit") {
+        std::string action, subName, from_keyword, n1_str, n2_str;
+        if (!(iss >> action >> subName >> from_keyword >> n1_str >> n2_str) || action != "create" || from_keyword != "from") {
+            std::cerr << "Error: Syntax error. Usage: subcircuit create <SubName> from <Node1> <Node2>" << std::endl;
+            return;
+        }
+
+        int port1_id = nodeManager->resolveId(n1_str);
+        int port2_id = nodeManager->resolveId(n2_str);
+
+        std::cout << "Subcircuit '" << subName << "' defined with ports ("
+                  << n1_str << ", " << n2_str << ")." << std::endl;
+        std::cout << "Saving logic needs to be implemented here (using Cereal)." << std::endl; }
+
+        else {
         std::cerr << "Error: Unknown command: " << cmd << std::endl;
     }
-}
+
+    }
 
 void CommandParser::parseCommand(const std::string& line) {
     // --- Minimal, safe whitespace tokenizer ---
@@ -681,5 +713,75 @@ void CommandParser::handleConnect(std::istringstream& in) {
     int rep = nodeManager->connect(a,b);
     graph->canonicalizeNodes(*nodeManager);
     std::cout << "connected; rep = " << rep << "\n";
+}
+void CommandParser::handleAddComponent(const std::string& instance_name, const std::string& external_n1_str, const std::string& external_n2_str) {
+    std::string sub_path = "library/" + instance_name + ".sub";
+    std::ifstream sub_file(sub_path);
+
+    if (!sub_file.is_open()) {
+        std::cerr << "Error: Cannot open subcircuit file: " << sub_path << std::endl;
+        return;
+    }
+
+    // 1. Read the port definition line
+    std::string line, keyword, internal_port1_name, internal_port2_name;
+    std::getline(sub_file, line);
+    std::istringstream port_iss(line);
+    if (!(port_iss >> keyword >> internal_port1_name >> internal_port2_name) || keyword != "ports") {
+        std::cerr << "Error: Invalid subcircuit file. First line must be 'ports <name1> <name2>'." << std::endl;
+        return;
+    }
+
+    // 2. Resolve the EXTERNAL nodes in the main circuit
+    int external_n1_id = nodeManager->resolveId(external_n1_str);
+    int external_n2_id = nodeManager->resolveId(external_n2_str);
+
+    // 3. Create a map to translate internal subcircuit node names to final IDs in the main graph
+    std::map<std::string, int> nodeMap;
+    nodeMap[internal_port1_name] = external_n1_id;
+    nodeMap[internal_port2_name] = external_n2_id;
+
+    // 4. Read the rest of the file to add internal elements
+    while (std::getline(sub_file, line)) {
+        if (line.empty() || line[0] == '#') continue;
+
+        std::istringstream elem_iss(line);
+        std::string add_cmd, elem_name_internal, n1_internal_str, n2_internal_str, val_str_or_model;
+
+        if (!(elem_iss >> add_cmd >> elem_name_internal >> n1_internal_str >> n2_internal_str >> val_str_or_model)) continue;
+
+        // For each node of the internal element, find its final ID in the main graph.
+        // If it's a new internal node, create a fresh, unique ID for it.
+        for (const auto& node_str : {n1_internal_str, n2_internal_str}) {
+            if (nodeMap.find(node_str) == nodeMap.end()) {
+                std::string unique_label = instance_name + "." + node_str;
+                int new_id = nodeManager->labelNode(unique_label);
+                nodeMap[node_str] = new_id;
+            }
+        }
+
+        // Create the element with the mapped node IDs and a unique name
+        int final_n1_id = nodeMap.at(n1_internal_str);
+        int final_n2_id = nodeMap.at(n2_internal_str);
+        std::string final_elem_name = instance_name + "." + elem_name_internal;
+        double value = parseValueWithPrefix(val_str_or_model); // Assumes val_str_or_model is a value
+
+        Element* new_elem = nullptr;
+        char type = toupper(elem_name_internal[0]);
+        switch (type) {
+            case 'R': new_elem = new Resistor(final_elem_name, final_n1_id, final_n2_id, value); break;
+            case 'C': new_elem = new Capacitor(final_elem_name, final_n1_id, final_n2_id, value); break;
+            case 'L': new_elem = new Inductor(final_elem_name, final_n1_id, final_n2_id, value); break;
+            case 'V': new_elem = new VoltageSource(final_elem_name, final_n1_id, final_n2_id, value); break;
+            case 'I': new_elem = new CurrentSource(final_elem_name, final_n1_id, final_n2_id, value); break;
+            case 'D': new_elem = new Diode(final_elem_name, final_n1_id, final_n2_id, val_str_or_model); break;
+                // Add cases for other element types (VCCS, VCVS, etc.) as needed
+            default:
+                std::cerr << "Warning: Skipping unknown element type '" << type << "' inside subcircuit." << std::endl;
+                continue;
+        }
+        graph->addElement(new_elem);
+    }
+    std::cout << "Successfully added subcircuit instance '" << instance_name << "' to the graph." << std::endl;
 }
 

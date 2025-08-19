@@ -199,7 +199,38 @@ public:
 
     void linkControlSource(const std::vector<Element*>& all_elements);
 };
+class Subcircuit : public Element {
+public:
+    std::vector<Element*> internalElements;
 
+    int internalPortNode1;
+    int internalPortNode2;
+
+    Subcircuit(std::string n, int n1, int n2)
+            : Element(n, n1, n2, 0.0, SUBCIRCUIT) {
+        introducesExtraVariable = false;
+    }
+
+    ~Subcircuit() {
+        for (Element* elem : internalElements) {
+            delete elem;
+        }
+        internalElements.clear();
+    }
+
+    void display() override {
+        std::cout << "Subcircuit " << name << ": connected to nodes " << node1 << " - " << node2
+                  << ", contains " << internalElements.size() << " internal elements." << std::endl;
+    }
+
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
+                  const std::map<int, int>& node_id_to_matrix_idx,
+                  int extra_var_start_idx,
+                  const Eigen::VectorXd& prev_solution,
+                  double h) override {
+
+    }
+};
 
 class SinusoidalSource : public Element {
 private:

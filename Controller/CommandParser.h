@@ -23,6 +23,7 @@ private:
     void handlePrintCommand(std::istringstream& iss);
     void handleShowSchematics();
     void handleSaveCommand(std::istringstream& iss);
+    void handleAddComponent(const std::string& sub_name, const std::string& external_n1_str, const std::string& external_n2_str);
 
     void cmd_scope_load(const std::vector<std::string>& tokens);
     void cmd_scope_clear();
