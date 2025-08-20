@@ -284,8 +284,19 @@ void CommandParser::parseCommandCore(const std::string& line) {
             std::cerr << "Error: Syntax error (missing value)\n";
             return;
         }
+        float posX = 100.0f, posY = 100.0f; // Default position if not provided
+        std::string x_str, y_str;
+        if (iss >> x_str >> y_str) {
+            try {
+                posX = std::stof(x_str);
+                posY = std::stof(y_str);
+            } catch(...) {
+                // If conversion fails, just ignore and use the default position
+            }
+        }
 
         double value = parseValueWithPrefix(value_str);
+
         if ((type != 'V' && type != 'I' && value <= 0) || value == -1e99) {
             std::string typeName = "Value";
             if (type == 'R') typeName = "Resistance";
@@ -294,6 +305,7 @@ void CommandParser::parseCommandCore(const std::string& line) {
             std::cerr << "Error: " << typeName << " cannot be zero or negative\n";
             return;
         }
+
 
         int n1 = nodeManager->resolveId(n1_str);
         int n2 = nodeManager->resolveId(n2_str);
@@ -310,6 +322,7 @@ void CommandParser::parseCommandCore(const std::string& line) {
         }
         graph->addElement(e);
         std::cout << "Added element: " << name << std::endl;
+
 
     } else if (cmd == "delete") {
         std::string name;
@@ -394,15 +407,55 @@ void CommandParser::parseCommandCore(const std::string& line) {
             std::cerr << "Error: Syntax error. Usage: subcircuit create <SubName> from <Node1> <Node2>" << std::endl;
             return;
         }
+        std::filesystem::path library_dir = "library";
+        if (!std::filesystem::exists(library_dir)) {
+            std::filesystem::create_directory(library_dir);
+        }
 
-        int port1_id = nodeManager->resolveId(n1_str);
-        int port2_id = nodeManager->resolveId(n2_str);
+        // Define the output file path
+        std::string sub_path = library_dir.string() + "/" + subName + ".sub";
+        std::ofstream outfile(sub_path);
 
-        std::cout << "Subcircuit '" << subName << "' defined with ports ("
-                  << n1_str << ", " << n2_str << ")." << std::endl;
-        std::cout << "Saving logic needs to be implemented here (using Cereal)." << std::endl; }
+        if (!outfile.is_open()) {
+            std::cerr << "Error: Could not open file for writing: " << sub_path << std::endl;
+            return;
+        }
 
-        else {
+        // --- Main Saving Logic ---
+
+        // 1. Write the 'ports' line to the file.
+        // The node names provided by the user become the internal port names for the subcircuit.
+        outfile << "ports " << n1_str << " " << n2_str << std::endl;
+
+        // 2. Iterate through all elements in the current graph and write them to the file.
+        for (const auto& elem : graph->getElements()) {
+            // We need the string names of the nodes for saving, not their numeric IDs.
+            std::string node1_name = nodeManager->nameOf(elem->node1);
+            std::string node2_name = nodeManager->nameOf(elem->node2);
+
+            // If a node doesn't have a label, use its numeric ID as its name.
+            if (node1_name.empty()) node1_name = std::to_string(elem->node1);
+            if (node2_name.empty()) node2_name = std::to_string(elem->node2);
+
+            // Write the element's definition in the "add <name> <n1> <n2> <value/model>" format.
+            outfile << "add " << elem->name << " " << node1_name << " " << node2_name << " ";
+
+            if (elem->type == DIODE) {
+                outfile << dynamic_cast<Diode*>(elem)->model << std::endl;
+            } else {
+                // For now, we save the simple value. More complex sources would need more logic.
+                outfile << elem->value << std::endl;
+            }
+        }
+
+        outfile.close();
+        std::cout << "SUCCESS: Subcircuit '" << subName << "' saved to " << sub_path << std::endl;
+    }
+
+
+
+
+else {
         std::cerr << "Error: Unknown command: " << cmd << std::endl;
     }
 
