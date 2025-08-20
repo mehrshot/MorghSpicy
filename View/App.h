@@ -14,6 +14,7 @@
 #include "Model/MNASolver.h"
 #include "Model/NodeManager.h"
 #include "Model/Graph.h"
+#include "View/CircuitGrid.h"
 
 struct SigUI {
     double Fs      = 10000.0;             // sampling rate for text signals
@@ -22,6 +23,10 @@ struct SigUI {
     bool   byChunks = false;              // if true, overlay only first chunk (demo streaming)
     std::string lastPath = "schematics/rc_signal.txt";
 };
+enum class Page {
+    Plotter,
+    Grid
+};
 
 class App {
 public:
@@ -29,6 +34,8 @@ public:
     int run();
 
 private:
+    Page currentPage = Page::Grid; // پیش‌فرض بفرستیم روی گرید
+    std::unique_ptr<View::CircuitGrid> gridPage;
     bool init();
     void handleEvents();
     void update();

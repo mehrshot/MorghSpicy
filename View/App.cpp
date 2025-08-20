@@ -11,6 +11,7 @@
 #include "Controller/SimulationRunner.h"
 #include "Model/NodeManager.h"
 #include "Model/Elements.h"
+#include "View/CircuitGrid.h"   // --- اضافه شد ---
 
 // ----- helpers (declared also in header) -----
 std::vector<Point> App::combineSameGrid(const std::vector<Point>& a,
@@ -63,6 +64,11 @@ bool App::init() {
         return false;
     }
 
+    // --- اضافه شد: صفحه‌ی گرید ---
+    gridPage = std::make_unique<View::CircuitGrid>(&graph, &nodeManager);
+
+
+
     isRunning = true;
     return true;
 }
@@ -113,6 +119,15 @@ void App::handleEvents() {
     while (SDL_PollEvent(&e)) {
         if (e.type == SDL_EVENT_QUIT) isRunning = false;
 
+        // --- اضافه شد: سوییچ بین Grid و Plotter ---
+        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F2 && (e.key.down || e.key.repeat)) {
+            currentPage = (currentPage == Page::Grid) ? Page::Plotter : Page::Grid;
+        }
+        if (currentPage == Page::Grid && gridPage) {
+            gridPage->handleEvent(e);
+            continue;
+        }
+
         // Give all input to the plotter (zoom/pan/auto-zoom/cursors/selection)
         plotter.handleEvent(e);
 
@@ -126,18 +141,18 @@ void App::handleEvents() {
             switch (e.key.key) {
                 case SDLK_ESCAPE: isRunning = false; break;
 
-                    // -------- Load a text signal file (1 value per line) ----------
+                // -------- Load a text signal file (1 value per line) ----------
                 case SDLK_L: {
                     loadAndPlotSignal(sigui.lastPath, sigui.Fs, sigui.tStop, sigui.chunkSz, sigui.byChunks);
                 } break;
 
-                    // Toggle chunked demo (load only first chunk)
+                // Toggle chunked demo (load only first chunk)
                 case SDLK_S: {
                     sigui.byChunks = !sigui.byChunks;
                     std::cout << "[Signal] byChunks = " << (sigui.byChunks ? "true" : "false") << "\n";
                 } break;
 
-                    // Re-run transient quickly (R)
+                // Re-run transient quickly (R)
                 case SDLK_R: {
                     double stopTime        = 0.05;
                     double initialTimestep = 1e-5;
@@ -149,7 +164,7 @@ void App::handleEvents() {
                     showPlot(pd);
                 } break;
 
-                    // ---- Scope math: M=sum last two, N=diff last two, K=scale last ----
+                // ---- Scope math: M=sum last two, N=diff last two, K=scale last ----
                 case SDLK_M: {
                     const auto& ss = plotter.debugSeries();
                     if (ss.size() >= 2) {
@@ -176,7 +191,7 @@ void App::handleEvents() {
                     }
                 } break;
 
-                    // ---- Series selection 1–9, visibility (V), remove (Del), legend (G) ----
+                // ---- Series selection 1–9, visibility (V), remove (Del), legend (G) ----
                 case SDLK_1: case SDLK_2: case SDLK_3:
                 case SDLK_4: case SDLK_5: case SDLK_6:
                 case SDLK_7: case SDLK_8: case SDLK_9: {
@@ -216,7 +231,12 @@ void App::render() {
     SDL_SetRenderDrawColor(renderer, 245,245,245,255);
     SDL_RenderClear(renderer);
 
-    plotter.render(renderer);
+    // --- اضافه شد: رندر شرطی ---
+    if (currentPage == Page::Grid && gridPage) {
+        gridPage->render(renderer);
+    } else {
+        plotter.render(renderer);
+    }
 
     // Optional: cursor readouts in console
     if (auto x1 = plotter.getCursor1X()) {

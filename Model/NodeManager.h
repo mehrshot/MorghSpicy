@@ -27,6 +27,8 @@ public:
     // Canonical DSU id for a node id (0 stays 0)
     int canonical(int u) const;
 
+
+
     // After DSU merges, refresh label→id to the canonical representatives.
     void rebuildLabelTable();
 
