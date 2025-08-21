@@ -40,6 +40,7 @@ private:
     void handleEvents();
     void update();
     void render();
+    void renderSchematic();
     void cleanup();
 
     // Plot bridges

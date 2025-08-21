@@ -23,6 +23,8 @@ public:
     bool introducesExtraVariable = false;
     // The index of this element's extra variable in the MNA matrix
     int extraVariableIndex = -1;
+    float x = 0.0f; // Position for graphical representation
+    float y = 0.0f;
 
     Element(std::string n, int n1, int n2, double v, ElementType t)
             : name(n), node1(n1), node2(n2), value(v), type(t) {}

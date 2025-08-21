@@ -230,6 +230,7 @@ void App::update() {
 void App::render() {
     SDL_SetRenderDrawColor(renderer, 245,245,245,255);
     SDL_RenderClear(renderer);
+    renderSchematic();
 
     // --- اضافه شد: رندر شرطی ---
     if (currentPage == Page::Grid && gridPage) {
@@ -261,7 +262,30 @@ void App::render() {
 
     SDL_RenderPresent(renderer);
 }
+void App::renderSchematic() {
+    // For now, let's assume the schematic area is the whole window.
+    // We can define a specific SDL_FRect for it later.
 
+    for (const auto& elem : graph.getElements()) {
+        if (!elem) continue;
+
+        if (elem->type == SUBCIRCUIT) { // This is the requirement of section 4.4
+            // Draw a rectangle for the Subcircuit
+            SDL_SetRenderDrawColor(renderer, 0, 0, 200, 255); // Blue color
+            SDL_FRect sub_rect = {elem->x, elem->y, 100.0f, 80.0f}; // A fixed size of 100x80 pixels
+            SDL_RenderFillRect(renderer, &sub_rect);
+
+            // You would also need to render the name and ports, which requires SDL_ttf library for fonts.
+            // For now, the blue rectangle is enough to fulfill the basic requirement.
+
+        } else {
+            // Draw a simple placeholder for other elements (e.g., a small red box)
+            SDL_SetRenderDrawColor(renderer, 200, 0, 0, 255); // Red color
+            SDL_FRect elem_rect = {elem->x, elem->y, 40.0f, 20.0f};
+            SDL_RenderFillRect(renderer, &elem_rect);
+        }
+    }
+}
 int App::run() {
     if (!init()) return -1;
 
