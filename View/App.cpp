@@ -65,7 +65,7 @@ bool App::init() {
     }
 
     // --- اضافه شد: صفحه‌ی گرید ---
-    gridPage = std::make_unique<View::CircuitGrid>(&graph, &nodeManager);
+    gridPage = std::make_unique<View::CircuitGrid>(window,&graph, &nodeManager);
 
 
 
