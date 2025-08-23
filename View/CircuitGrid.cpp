@@ -262,6 +262,21 @@ std::optional<double> CircuitGrid::parseEng(const std::string& sraw) {
             float mx, my; SDL_GetMouseState(&mx, &my);
             int gx = mx / cellSize;
             int gy = my / cellSize;
+
+            if (currentKind == "Ground") {
+                PlacedElement pe;
+                pe.kind = "Ground";
+                pe.name = "GND"; // نام زمین همیشه ثابت است
+                pe.n1 = "N" + std::to_string(gx) + "_" + std::to_string(gy);
+                pe.n2 = pe.n1; // نود دوم هم همان نود اول است
+                pe.gx1 = gx; pe.gy1 = gy;
+                pe.gx2 = gx; pe.gy2 = gy; // مختصات دوم هم همان اول است
+                staged.push_back(pe);
+                pendingFirstNode.reset(); // اطمینان از اینکه منتظر کلیک دوم نمی‌مانیم
+                return; // از اجرای بقیه کد جلوگیری می‌کنیم
+            }
+
+
             if (!pendingFirstNode.has_value()) {
                 pendingFirstNode = std::make_pair(gx, gy);
             } else {
@@ -289,172 +304,211 @@ std::optional<double> CircuitGrid::parseEng(const std::string& sraw) {
     }
 }
 
-    void CircuitGrid::render(SDL_Renderer* ren) {
+   void CircuitGrid::render(SDL_Renderer* ren) {
     // --- گرید ---
     SDL_SetRenderDrawColor(ren, 220, 220, 220, 255);
     for (int x = 0; x < 800; x += cellSize) SDL_RenderLine(ren, x, 0, x, 600);
     for (int y = 0; y < 600; y += cellSize) SDL_RenderLine(ren, 0, y, 800, y);
 
-
-
     // --- عناصر ---
-    for (auto& pe : staged) {
+    for (size_t i = 0; i < staged.size(); ++i) {
+        auto& pe = staged[i];
         int x1 = pe.gx1 * cellSize + cellSize / 2;
         int y1 = pe.gy1 * cellSize + cellSize / 2;
         int x2 = pe.gx2 * cellSize + cellSize / 2;
         int y2 = pe.gy2 * cellSize + cellSize / 2;
 
-
         int midx = (x1 + x2) / 2;
         int midy = (y1 + y2) / 2;
 
+        // --- اضافه شد: تشخیص جهت‌گیری قطعه ---
+        bool isVertical = (pe.gx1 == pe.gx2);
 
-        // بعد از رسم هر pe:
-        bool isSel = (selectedIndex.has_value() && *selectedIndex == (&pe - &staged[0]));
+        // --- هایلایت کردن قطعه انتخاب شده ---
+        bool isSel = (selectedIndex.has_value() && *selectedIndex == i);
         if (isSel) {
-            SDL_SetRenderDrawColor(ren, 255, 0, 0, 255);
-            // نقطه‌های برجسته روی دو سر
-            for (int r = -2; r <= 2; ++r) {
-                SDL_RenderLine(ren, x1-2, y1+r, x1+2, y1+r);
-                SDL_RenderLine(ren, x2-2, y2+r, x2+2, y2+r);
+            SDL_SetRenderDrawColor(ren, 255, 0, 0, 150); // رنگ قرمز نیمه‌شفاف
+            // رسم یک مستطیل بزرگتر دور قطعه برای نمایش بهتر انتخاب
+            if (isVertical) {
+                SDL_FRect selRect = { (float)x1 - 10, (float)std::min(y1, y2), 20.0f, (float)abs(y2 - y1) };
+                SDL_RenderFillRect(ren, &selRect);
+            } else {
+                SDL_FRect selRect = { (float)std::min(x1, x2), (float)y1 - 10, (float)abs(x2 - x1), 20.0f };
+                SDL_RenderFillRect(ren, &selRect);
             }
-            // قاب کوچک در مرکز
-            SDL_RenderLine(ren, midx-8, midy-8, midx+8, midy-8);
-            SDL_RenderLine(ren, midx+8, midy-8, midx+8, midy+8);
-            SDL_RenderLine(ren, midx+8, midy+8, midx-8, midy+8);
-            SDL_RenderLine(ren, midx-8, midy+8, midx-8, midy-8);
         }
 
-
+        // --- رسم هر قطعه با توجه به جهت‌گیری ---
         if (pe.kind == "Resistor") {
             SDL_SetRenderDrawColor(ren, 200, 0, 0, 255);
-            // خط شکسته (Z شکل)
-            SDL_RenderLine(ren, x1, y1, midx - 15, midy - 10);
-            SDL_RenderLine(ren, midx - 15, midy - 10, midx, midy + 10);
-            SDL_RenderLine(ren, midx, midy + 10, midx + 15, midy - 10);
-            SDL_RenderLine(ren, midx + 15, midy - 10, x2, y2);
+            if (isVertical) {
+                // رسم عمودی مقاومت
+                int len = 15; // طول هر بخش زیگزاگ
+                SDL_RenderLine(ren, x1, y1, midx - 10, midy - len);
+                SDL_RenderLine(ren, midx - 10, midy - len, midx + 10, midy);
+                SDL_RenderLine(ren, midx + 10, midy, midx - 10, midy + len);
+                SDL_RenderLine(ren, midx - 10, midy + len, x2, y2);
+            } else {
+                // رسم افقی (کد قبلی شما)
+                int len = 15;
+                SDL_RenderLine(ren, x1, y1, midx - len, midy - 10);
+                SDL_RenderLine(ren, midx - len, midy - 10, midx, midy + 10);
+                SDL_RenderLine(ren, midx, midy + 10, midx + len, midy - 10);
+                SDL_RenderLine(ren, midx + len, midy - 10, x2, y2);
+            }
 
         } else if (pe.kind == "Capacitor") {
             SDL_SetRenderDrawColor(ren, 0, 0, 200, 255);
-            // دو خط موازی عمود
-            SDL_RenderLine(ren, midx - 5, midy - 15, midx - 5, midy + 15);
-            SDL_RenderLine(ren, midx + 5, midy - 15, midx + 5, midy + 15);
-            // اتصال به نودها
-            SDL_RenderLine(ren, x1, y1, midx - 5, midy);
-            SDL_RenderLine(ren, midx + 5, midy, x2, y2);
+            if (isVertical) {
+                // رسم عمودی خازن (صفحات افقی)
+                SDL_RenderLine(ren, midx - 15, midy - 5, midx + 15, midy - 5);
+                SDL_RenderLine(ren, midx - 15, midy + 5, midx + 15, midy + 5);
+                // اتصال به نودها
+                SDL_RenderLine(ren, x1, y1, midx, midy - 5);
+                SDL_RenderLine(ren, midx, midy + 5, x2, y2);
+            } else {
+                // رسم افقی (صفحات عمودی - کد قبلی شما)
+                SDL_RenderLine(ren, midx - 5, midy - 15, midx - 5, midy + 15);
+                SDL_RenderLine(ren, midx + 5, midy - 15, midx + 5, midy + 15);
+                // اتصال به نودها
+                SDL_RenderLine(ren, x1, y1, midx - 5, midy);
+                SDL_RenderLine(ren, midx + 5, midy, x2, y2);
+            }
 
         } else if (pe.kind == "Inductor") {
             SDL_SetRenderDrawColor(ren, 0, 150, 0, 255);
-            // سه نیم‌دایره ساده
+            int radius = 8;
+            int offset = 10;
+            // اتصال به نودها
+            SDL_RenderLine(ren, x1, y1, isVertical ? midx : midx - (2*offset + radius), isVertical ? midy - (2*offset + radius) : midy);
+            SDL_RenderLine(ren, isVertical ? midx : midx + (2*offset + radius), isVertical ? midy + (2*offset + radius) : midy, x2, y2);
+            // سه نیم‌دایره
             for (int i = -1; i <= 1; i++) {
-                int cx = midx + i * 10;
+                int cx = isVertical ? midx : midx + i * offset;
+                int cy = isVertical ? midy + i * offset : midy;
                 for (int a = 0; a < 180; a += 10) {
-                    int px = cx + int(8 * cos(a * M_PI / 180.0));
-                    int py = midy + int(8 * sin(a * M_PI / 180.0));
+                    int px = cx + int(radius * cos(a * M_PI / 180.0) * (isVertical ? 1 : 0) + radius * sin(a * M_PI / 180.0) * (isVertical ? 0 : 1));
+                    int py = cy + int(radius * sin(a * M_PI / 180.0) * (isVertical ? 1 : 1) - radius * cos(a * M_PI / 180.0) * (isVertical ? 1 : 0));
+                    if (isVertical) px = cx + int(radius * sin(a * M_PI / 180.0));
+                    else py = cy - int(radius * cos(a * M_PI / 180.0));
                     SDL_RenderPoint(ren, px, py);
                 }
             }
-            // خط به نودها
-            SDL_RenderLine(ren, x1, y1, midx - 20, midy);
-            SDL_RenderLine(ren, midx + 20, midy, x2, y2);
 
-        } else if (pe.kind == "VoltageSource") {
-            SDL_SetRenderDrawColor(ren, 255, 165, 0, 255);
-            // دایره
-            for (int a = 0; a < 360; a += 5) {
-                int px = midx + int(15 * cos(a * M_PI / 180.0));
-                int py = midy + int(15 * sin(a * M_PI / 180.0));
-                SDL_RenderPoint(ren, px, py);
-            }
-            // خط به نودها
-            SDL_RenderLine(ren, x1, y1, midx - 15, midy);
-            SDL_RenderLine(ren, midx + 15, midy, x2, y2);
+        } else if (pe.kind == "VoltageSource" || pe.kind == "CurrentSource") {
+    int radius = 15;
+    // دایره برای هر دو
+    if(pe.kind == "VoltageSource") SDL_SetRenderDrawColor(ren, 255, 165, 0, 255);
+    else SDL_SetRenderDrawColor(ren, 128, 0, 128, 255);
+    for (int a = 0; a < 360; a += 5) {
+        int px = midx + int(radius * cos(a * M_PI / 180.0));
+        int py = midy + int(radius * sin(a * M_PI / 180.0));
+        SDL_RenderPoint(ren, px, py);
+    }
 
-        } else if (pe.kind == "CurrentSource") {
-            SDL_SetRenderDrawColor(ren, 128, 0, 128, 255);
-            // دایره
-            for (int a = 0; a < 360; a += 5) {
-                int px = midx + int(15 * cos(a * M_PI / 180.0));
-                int py = midy + int(15 * sin(a * M_PI / 180.0));
-                SDL_RenderPoint(ren, px, py);
-            }
-            // فلش داخل دایره
-            SDL_RenderLine(ren, midx, midy - 8, midx, midy + 8);
-            SDL_RenderLine(ren, midx, midy + 8, midx - 5, midy + 3);
-            SDL_RenderLine(ren, midx, midy + 8, midx + 5, midy + 3);
-            // خط به نودها
-            SDL_RenderLine(ren, x1, y1, midx - 15, midy);
-            SDL_RenderLine(ren, midx + 15, midy, x2, y2);
+    // خط اتصال به نودها
+    SDL_RenderLine(ren, x1, y1, isVertical ? midx : midx - radius, isVertical ? midy - radius : midy);
+    SDL_RenderLine(ren, isVertical ? midx : midx + radius, isVertical ? midy + radius : midy, x2, y2);
+
+    if (pe.kind == "VoltageSource") {
+        // --- نماد واضح برای منبع ولتاژ ---
+        int sign_len = 4;
+        // علامت مثبت (+)
+        SDL_RenderLine(ren, isVertical ? midx - sign_len : midx - 8, isVertical ? midy - 8 : midy - sign_len, isVertical ? midx + sign_len : midx - 8, isVertical ? midy - 8 : midy + sign_len);
+        SDL_RenderLine(ren, isVertical ? midx : midx - 8, isVertical ? midy - 8 : midy, isVertical ? midx : midx - 8, isVertical ? midy - 8 : midy); // خط افقی +
+        // علامت منفی (-)
+        SDL_RenderLine(ren, isVertical ? midx - sign_len : midx + 8, isVertical ? midy + 8 : midy - sign_len, isVertical ? midx + sign_len : midx + 8, isVertical ? midy + 8 : midy + sign_len);
+    } else { // CurrentSource
+        // --- نماد واضح برای منبع جریان (فلش) ---
+        if (isVertical) {
+            // فلش عمودی
+            SDL_RenderLine(ren, midx, midy - 8, midx, midy + 8); // بدنه فلش
+            SDL_RenderLine(ren, midx, midy + 8, midx - 5, midy + 3); // سر فلش
+            SDL_RenderLine(ren, midx, midy + 8, midx + 5, midy + 3); // سر فلش
+        } else {
+            // فلش افقی
+            SDL_RenderLine(ren, midx - 8, midy, midx + 8, midy); // بدنه فلش
+            SDL_RenderLine(ren, midx + 8, midy, midx + 3, midy - 5); // سر فلش
+            SDL_RenderLine(ren, midx + 8, midy, midx + 3, midy + 5); // سر فلش
+        }
+    }
 
         } else if (pe.kind == "Diode") {
             SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-            // مثلث
-            SDL_RenderLine(ren, midx - 10, midy - 10, midx - 10, midy + 10);
-            SDL_RenderLine(ren, midx - 10, midy - 10, midx + 5, midy);
-            SDL_RenderLine(ren, midx - 10, midy + 10, midx + 5, midy);
-            // خط عمود
-            SDL_RenderLine(ren, midx + 5, midy - 10, midx + 5, midy + 10);
-            // خط به نودها
-            SDL_RenderLine(ren, x1, y1, midx - 10, midy);
-            SDL_RenderLine(ren, midx + 5, midy, x2, y2);
+            if (isVertical) {
+                // مثلث عمودی
+                SDL_RenderLine(ren, midx - 10, midy - 10, midx + 10, midy - 10);
+                SDL_RenderLine(ren, midx - 10, midy - 10, midx, midy + 5);
+                SDL_RenderLine(ren, midx + 10, midy - 10, midx, midy + 5);
+                // خط عمود
+                SDL_RenderLine(ren, midx - 10, midy + 5, midx + 10, midy + 5);
+                // خط به نودها
+                SDL_RenderLine(ren, x1, y1, midx, midy - 10);
+                SDL_RenderLine(ren, midx, midy + 5, x2, y2);
+            } else {
+                // مثلث افقی (کد قبلی شما)
+                SDL_RenderLine(ren, midx - 10, midy - 10, midx - 10, midy + 10);
+                SDL_RenderLine(ren, midx - 10, midy - 10, midx + 5, midy);
+                SDL_RenderLine(ren, midx - 10, midy + 10, midx + 5, midy);
+                // خط عمود
+                SDL_RenderLine(ren, midx + 5, midy - 10, midx + 5, midy + 10);
+                // خط به نودها
+                SDL_RenderLine(ren, x1, y1, midx - 10, midy);
+                SDL_RenderLine(ren, midx + 5, midy, x2, y2);
+            }
 
-        }else if (pe.kind == "Ground") {
+        } else if (pe.kind == "Ground") {
             SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-            SDL_RenderLine(ren, midx - 10, midy, midx + 10, midy);
-            SDL_RenderLine(ren, midx - 6, midy + 5, midx + 6, midy + 5);
-            SDL_RenderLine(ren, midx - 3, midy + 10, midx + 3, midy + 10);
-        }
+            // زمین همیشه یک شکل دارد و به نود اول وصل می‌شود
+            int gx = pe.gx1 * cellSize + cellSize / 2;
+            int gy = pe.gy1 * cellSize + cellSize / 2;
+            SDL_RenderLine(ren, gx, gy, gx, gy + 15); // خط عمودی به سمت پایین
+            SDL_RenderLine(ren, gx - 10, gy + 15, gx + 10, gy + 15);
+            SDL_RenderLine(ren, gx - 6, gy + 20, gx + 6, gy + 20);
+            SDL_RenderLine(ren, gx - 3, gy + 25, gx + 3, gy + 25);
 
-
-
-
-        else if (pe.kind == "Wire") {
+        } else if (pe.kind == "Wire") {
             SDL_SetRenderDrawColor(ren, 100, 100, 100, 255);
             SDL_RenderLine(ren, x1, y1, x2, y2);
         }
-    }
-        if (editing && selectedIndex.has_value()) {
-            // پیدا کردن قطعه انتخاب شده
-            const auto& pe = staged.at(*selectedIndex);
 
-            // محاسبه یک موقعیت مناسب برای کادر ویرایش (مثلاً زیر قطعه)
-            int mid_x = (pe.gx1 * cellSize + pe.gx2 * cellSize) / 2 + cellSize / 2;
-            int mid_y = (pe.gy1 * cellSize + pe.gy2 * cellSize) / 2 + cellSize / 2;
-            SDL_FRect editRect = {
-                (float)mid_x - 50,  // x
-                (float)mid_y + 20,  // y
-                100.0f,             // width
-                25.0f               // height
-            };
-
-            // رسم پس‌زمینه سفید برای کادر
-            SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
-            SDL_RenderFillRect(ren, &editRect);
-
-            // رسم حاشیه مشکی برای کادر
-            SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-            SDL_RenderRect(ren, &editRect);
-
-            // رسم متنی که کاربر تایپ کرده است (از inputBuffer)
-            // با استفاده از همان تابع renderText که قبلاً نوشته‌ایم
-            if (!inputBuffer.empty()) {
-                renderText(ren, inputBuffer, (int)editRect.x + 5, (int)editRect.y + 5);
-            }
-
-            // می‌توانید یک مکان‌نمای چشمک‌زن هم اضافه کنید
-            // (این بخش اختیاری است)
-            Uint32 ticks = SDL_GetTicks();
-            if (ticks % 1000 < 500) { // هر نیم ثانیه چشمک بزند
-                SDL_Surface* tempSurface = TTF_RenderText_Blended(font, inputBuffer.c_str(), 0, textColor);
-                if (tempSurface) {
-                    int text_w = tempSurface->w;
-                    SDL_DestroySurface(tempSurface);
-                    SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-                    SDL_RenderLine(ren, (int)editRect.x + 5 + text_w, (int)editRect.y + 5, (int)editRect.x + 5 + text_w, (int)editRect.y + 20);
-                }
+        // --- کد نمایش متن و کادر ویرایش (بدون تغییر) ---
+        if (!editing || !isSel) {
+            // نمایش اسم و مقدار در حالت عادی
+            renderText(ren, pe.name, midx + 10, midy - 25, false);
+            if (!pe.valueStr.empty()) {
+                renderText(ren, pe.valueStr, midx + 10, midy + 10, false);
             }
         }
+    }
 
+    // رندر کردن کادر ویرایش متن (این بخش بدون تغییر از قبل باقی می‌ماند)
+    if (editing && selectedIndex.has_value()) {
+        const auto& pe = staged.at(*selectedIndex);
+        int mid_x = (pe.gx1 * cellSize + pe.gx2 * cellSize) / 2 + cellSize / 2;
+        int mid_y = (pe.gy1 * cellSize + pe.gy2 * cellSize) / 2 + cellSize / 2;
+        SDL_FRect editRect = { (float)mid_x - 50, (float)mid_y + 20, 100.0f, 25.0f };
+
+        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+        SDL_RenderFillRect(ren, &editRect);
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        SDL_RenderRect(ren, &editRect);
+
+        if (!inputBuffer.empty()) {
+            renderText(ren, inputBuffer, (int)editRect.x + 5, (int)editRect.y + 5, true);
+        }
+
+        Uint32 ticks = SDL_GetTicks();
+        if (ticks % 1000 < 500) {
+            SDL_Surface* tempSurface = TTF_RenderText_Blended(font, inputBuffer.c_str(), 0, textColor);
+            if (tempSurface) {
+                int text_w = tempSurface->w;
+                SDL_DestroySurface(tempSurface);
+                SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+                SDL_RenderLine(ren, (int)editRect.x + 5 + text_w, (int)editRect.y + 5, (int)editRect.x + 5 + text_w, (int)editRect.y + 20);
+            }
+        }
+    }
 }
 
 
