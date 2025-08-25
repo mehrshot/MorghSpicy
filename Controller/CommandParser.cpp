@@ -8,6 +8,21 @@
 #include <iostream>
 #include <fstream>
 #include <map>
+#include <regex>
+#include <fstream>
+#include <unordered_set>
+#include <filesystem>
+
+namespace {
+    static std::vector<OutputVariable> currentOutputs() {
+        return { { OutputVariable::VOLTAGE, std::string("N2") } };
+    }
+
+    static void appPlot(const PlotData& pd, const std::vector<OutputVariable>& outs) {
+        std::cout << "[Plot] points=" << pd.time_axis.size()
+                  << ", series=" << pd.data_series.size() << std::endl;
+    }
+}
 
 CommandParser::CommandParser() = default;
 
@@ -452,10 +467,13 @@ void CommandParser::parseCommandCore(const std::string& line) {
         std::cout << "SUCCESS: Subcircuit '" << subName << "' saved to " << sub_path << std::endl;
     }
 
+    else if (cmd == "ac") { handleAC(iss); }
+    else if (cmd == "phase") { handlePhase(iss); }
 
 
 
-else {
+
+    else {
         std::cerr << "Error: Unknown command: " << cmd << std::endl;
     }
 
@@ -838,3 +856,29 @@ void CommandParser::handleAddComponent(const std::string& instance_name, const s
     std::cout << "Successfully added subcircuit instance '" << instance_name << "' to the graph." << std::endl;
 }
 
+void CommandParser::handleAC(std::istringstream& iss) {
+    std::string sweep; double ws, we; int N;
+    iss >> sweep >> ws >> we >> N;
+
+    ACSweepSettings s{};
+    if (sweep == "lin") s.kind = ACSweepKind::Linear;
+    else if (sweep == "dec") s.kind = ACSweepKind::Decade;
+    else if (sweep == "oct") s.kind = ACSweepKind::Octave;
+    else return;
+
+    s.w_start = ws; s.w_stop = we; s.points = N;
+
+    std::vector<OutputVariable> outs = currentOutputs();
+    PlotData pd = simRunner->runACSweep(s, outs);
+    appPlot(pd, outs);
+}
+
+void CommandParser::handlePhase(std::istringstream& iss) {
+    double w0, phs, phe; int N;
+    iss >> w0 >> phs >> phe >> N;
+
+    PhaseSweepSettings s{w0, phs, phe, N};
+    std::vector<OutputVariable> outs = currentOutputs();
+    PlotData pd = simRunner->runPhaseSweep(s, outs);
+    appPlot(pd, outs);
+}

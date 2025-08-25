@@ -13,7 +13,24 @@
 #include <string>
 #include <vector>
 #include <Eigen/Dense>
+#include <complex>
+#include <numbers>
 
+enum class ACSweepKind { Linear, Decade, Octave };
+
+struct ACSweepSettings {
+    ACSweepKind kind;
+    double w_start;
+    double w_stop;
+    int points;
+};
+
+struct PhaseSweepSettings {
+    double w_base;
+    double phi_start;
+    double phi_stop;
+    int points;
+};
 
 
 struct OutputVariable {
@@ -42,6 +59,13 @@ private:
             double h
     );
 
+    std::vector<double> makeACGrid(ACSweepKind kind,
+                                   double w_start, double w_stop, int points) const;
+    Eigen::VectorXcd solveACOnce(double w) const;
+
+    std::complex<double> getPhasorAt(const OutputVariable& v,
+                                     const Eigen::VectorXcd& x) const;
+
 public:
     SimulationRunner(Graph* g, MNASolver* s, NodeManager* n);
 
@@ -51,6 +75,13 @@ public:
     void runDCSweep(const std::string& elemName,
                     double start, double stop, double step,
                     const std::vector<OutputVariable>& vars);
+
+    PlotData runACSweep(const ACSweepSettings& s,
+                        const std::vector<OutputVariable>& what);
+
+    PlotData runPhaseSweep(const PhaseSweepSettings& s,
+                           const std::vector<OutputVariable>& what);
+
 };
 
 

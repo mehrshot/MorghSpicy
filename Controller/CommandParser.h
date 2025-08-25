@@ -14,6 +14,21 @@ class Graph;
 class NodeManager;
 class SimulationRunner;
 
+struct SimSettingsAC {
+    ACSweepKind kind;
+    double w_start;
+    double w_stop;
+    int points;
+};
+
+struct SimSettingsPhase {
+    double w_base;
+    double phi_start;
+    double phi_stop;
+    int points;
+};
+
+
 class CommandParser {
 private:
     Graph* graph;
@@ -47,6 +62,9 @@ public:
     void parseCommand(const std::string& line);
 
     void parseCommandCore(const std::string& line);
+
+    void handleAC(std::istringstream& iss);
+    void handlePhase(std::istringstream& iss);
 
 };
 
