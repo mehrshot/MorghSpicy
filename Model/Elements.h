@@ -12,6 +12,7 @@
 #include<bits/stdc++.h>
 
 // Base class for all circuit elements
+
 class Element {
 public:
     std::string name;
@@ -128,6 +129,10 @@ public:
                   << ", Control: " << ctrl_node1 << "-" << ctrl_node2 << std::endl;
     }
 
+    int controlPos() const { return ctrl_node1; }
+    int controlNeg() const { return ctrl_node2; }
+
+
     void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                   const std::map<int, int>& node_id_to_matrix_idx,
                   int extra_var_start_idx,
@@ -142,6 +147,9 @@ public:
         : Element(n, n1, n2, gain,ElementType:: VCVS), ctrl_node1(c1), ctrl_node2(c2) {
         introducesExtraVariable = true;
     }
+
+    int controlPos() const { return ctrl_node1; }
+    int controlNeg() const { return ctrl_node2; }
 
     void display() override {
         std::cout << "VCVS " << name << ": Gain = " << value
@@ -200,6 +208,7 @@ public:
                   double h) override;
 
     void linkControlSource(const std::vector<Element*>& all_elements);
+
 };
 class Subcircuit : public Element {
 public:
