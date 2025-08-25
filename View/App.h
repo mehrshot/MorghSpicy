@@ -15,7 +15,8 @@
 #include "Model/NodeManager.h"
 #include "Model/Graph.h"
 #include "View/CircuitGrid.h"
-
+#include "Button.h"
+#include <SDL3_ttf/SDL_ttf.h>
 struct SigUI {
     double Fs      = 10000.0;             // sampling rate for text signals
     double tStop   = 0.1;                 // seconds to display
@@ -54,10 +55,12 @@ private:
                                               double K, char op);
     static std::vector<Point> scaleSeries(const std::vector<Point>& a, double K);
 
+
 private:
     bool         isRunning{};
     SDL_Window*  window{};
     SDL_Renderer* renderer{};
+    TTF_Font* mainFont{};
 
     Graph        graph;
     NodeManager  nodeManager;
@@ -66,6 +69,8 @@ private:
 
     Plotter      plotter{ SDL_FRect{60, 40, 700, 500} };
     SigUI        sigui{};
+    Button simSettingsButton;
+    bool showSimSettingsWindow = false;
 };
 
 #endif //MORGHSPICY_APP_H

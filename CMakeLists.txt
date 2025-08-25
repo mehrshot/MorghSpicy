@@ -31,6 +31,8 @@ add_executable(MorghSpicy
         View/Plotter.cpp
         View/CircuitGrid.cpp
         View/CircuitGrid.h
+        View/button.h
+        View/button.cpp
 )
 
 # --- Include paths (project headers) ---

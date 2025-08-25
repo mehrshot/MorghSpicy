@@ -12,7 +12,7 @@
 #include "Model/NodeManager.h"
 #include "Model/Elements.h"
 #include "View/CircuitGrid.h"   // --- اضافه شد ---
-
+#include <SDL3_ttf/SDL_ttf.h>
 // ----- helpers (declared also in header) -----
 std::vector<Point> App::combineSameGrid(const std::vector<Point>& a,
                                         const std::vector<Point>& b,
@@ -50,6 +50,17 @@ bool App::init() {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
         return false;
     }
+    if (TTF_Init() == -1) {
+        std::cerr << "TTF_Init failed: " << SDL_GetError() << "\n";
+        return false;
+    }
+
+    // Load the font
+    mainFont = TTF_OpenFont("assets/roboto.ttf", 18); // Use the path to your font, 18 is the font size
+    if (!mainFont) {
+        std::cerr << "TTF_OpenFont failed: " << SDL_GetError() << "\n";
+        return false;
+    }
 
     window = SDL_CreateWindow("MorghSpicy", 900, 650, SDL_WINDOW_RESIZABLE);
     if (!window) {
@@ -63,6 +74,7 @@ bool App::init() {
         std::cerr << "SDL_CreateRenderer failed: " << SDL_GetError() << "\n";
         return false;
     }
+    simSettingsButton = Button(10, 10, 200, 40, "Simulation Settings");
 
     // --- اضافه شد: صفحه‌ی گرید ---
     gridPage = std::make_unique<View::CircuitGrid>(window,&graph, &nodeManager);
@@ -74,6 +86,11 @@ bool App::init() {
 }
 
 void App::cleanup() {
+    if (mainFont) {
+        TTF_CloseFont(mainFont);
+        mainFont = nullptr;
+    }
+    TTF_Quit();
     if (renderer) { SDL_DestroyRenderer(renderer); renderer = nullptr; }
     if (window)   { SDL_DestroyWindow(window);     window   = nullptr; }
     SDL_Quit();
@@ -117,6 +134,11 @@ void App::loadAndPlotSignal(const std::string& path, double Fs, double tStop, in
 void App::handleEvents() {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
+        if (simSettingsButton.handleEvent(e)) {
+            // If the button was clicked, toggle the window visibility
+            showSimSettingsWindow = !showSimSettingsWindow;
+            std::cout << "Simulation Settings button clicked!" << std::endl;
+        }
         if (e.type == SDL_EVENT_QUIT) isRunning = false;
 
         // --- اضافه شد: سوییچ بین Grid و Plotter ---
@@ -258,6 +280,20 @@ void App::render() {
             }
             std::cout << "\n";
         }
+    }
+    SDL_SetRenderDrawColor(renderer, 245, 245, 245, 255);
+    SDL_RenderClear(renderer);
+
+    // Render our UI components
+    simSettingsButton.render(renderer);
+
+    if (showSimSettingsWindow) {
+        // Draw a simple rectangle to represent the settings window
+        SDL_FRect windowRect = {60.0f, 60.0f, 400.0f, 300.0f};
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        SDL_RenderFillRect(renderer, &windowRect);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderRect(renderer, &windowRect);
     }
 
     SDL_RenderPresent(renderer);
