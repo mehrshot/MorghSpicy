@@ -11,20 +11,25 @@
 #include "Controller/SimulationRunner.h"
 #include "Model/NodeManager.h"
 #include "Model/Elements.h"
-#include "View/CircuitGrid.h"   // --- اضافه شد ---
-#include <SDL3_ttf/SDL_ttf.h>
-// ----- helpers (declared also in header) -----
+#include "View/CircuitGrid.h"
+
+
 std::vector<Point> App::combineSameGrid(const std::vector<Point>& a,
                                         const std::vector<Point>& b,
                                         double K, char op) {
+    std::vector<Point> out;
     const size_t n = std::min(a.size(), b.size());
-    std::vector<Point> out; out.reserve(n);
+    out.reserve(n);
     for (size_t i = 0; i < n; ++i) {
-        const double y = (op == '+') ? (a[i].y + b[i].y) : (a[i].y - b[i].y);
+        double y = 0.0;
+        if (op == '+') y = a[i].y + b[i].y;
+        else if (op == '-') y = a[i].y - b[i].y;
+        else if (op == '*') y = a[i].y * b[i].y;
         out.push_back({ a[i].x, K * y });
     }
     return out;
 }
+
 
 std::vector<Point> App::scaleSeries(const std::vector<Point>& a, double K) {
     std::vector<Point> out; out.reserve(a.size());
@@ -50,17 +55,6 @@ bool App::init() {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
         return false;
     }
-    if (TTF_Init() == -1) {
-        std::cerr << "TTF_Init failed: " << SDL_GetError() << "\n";
-        return false;
-    }
-
-    // Load the font
-    mainFont = TTF_OpenFont("assets/roboto.ttf", 18); // Use the path to your font, 18 is the font size
-    if (!mainFont) {
-        std::cerr << "TTF_OpenFont failed: " << SDL_GetError() << "\n";
-        return false;
-    }
 
     window = SDL_CreateWindow("MorghSpicy", 900, 650, SDL_WINDOW_RESIZABLE);
     if (!window) {
@@ -74,7 +68,6 @@ bool App::init() {
         std::cerr << "SDL_CreateRenderer failed: " << SDL_GetError() << "\n";
         return false;
     }
-    simSettingsButton = Button(10, 10, 200, 40, "Simulation Settings");
 
     // --- اضافه شد: صفحه‌ی گرید ---
     gridPage = std::make_unique<View::CircuitGrid>(window,&graph, &nodeManager);
@@ -86,11 +79,6 @@ bool App::init() {
 }
 
 void App::cleanup() {
-    if (mainFont) {
-        TTF_CloseFont(mainFont);
-        mainFont = nullptr;
-    }
-    TTF_Quit();
     if (renderer) { SDL_DestroyRenderer(renderer); renderer = nullptr; }
     if (window)   { SDL_DestroyWindow(window);     window   = nullptr; }
     SDL_Quit();
@@ -98,13 +86,26 @@ void App::cleanup() {
 
 void App::showPlot(const PlotData& pd) {
     plotter.clear();
+    std::vector<std::vector<Point>> added;
     for (size_t k = 0; k < pd.data_series.size(); ++k) {
+        auto s = toSeries(pd.time_axis, pd.data_series[k]);
+        added.push_back(s);
         plotter.addSeries(
                 (k < pd.series_names.size() ? pd.series_names[k] : "sig_" + std::to_string(k)),
-                toSeries(pd.time_axis, pd.data_series[k])
+                s
         );
     }
+    if (pd.series_names.size() == 2) {
+        bool v0 = pd.series_names[0].rfind("V(", 0) == 0;
+        bool v1 = pd.series_names[1].rfind("V(", 0) == 0;
+        if (v0 && v1) {
+            auto diff = combineSameGrid(added[0], added[1], 1.0, '-');
+            std::string name = pd.series_names[0] + "-" + pd.series_names[1];
+            plotter.addSeries(name, diff);
+        }
+    }
 }
+
 
 void App::loadAndPlotSignal(const std::string& path, double Fs, double tStop, int chunkSize) {
     Signal s(path, Fs, tStop, chunkSize);
@@ -134,11 +135,6 @@ void App::loadAndPlotSignal(const std::string& path, double Fs, double tStop, in
 void App::handleEvents() {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
-        if (simSettingsButton.handleEvent(e)) {
-            // If the button was clicked, toggle the window visibility
-            showSimSettingsWindow = !showSimSettingsWindow;
-            std::cout << "Simulation Settings button clicked!" << std::endl;
-        }
         if (e.type == SDL_EVENT_QUIT) isRunning = false;
 
         // --- اضافه شد: سوییچ بین Grid و Plotter ---
@@ -281,20 +277,6 @@ void App::render() {
             std::cout << "\n";
         }
     }
-    SDL_SetRenderDrawColor(renderer, 245, 245, 245, 255);
-    SDL_RenderClear(renderer);
-
-    // Render our UI components
-    simSettingsButton.render(renderer);
-
-    if (showSimSettingsWindow) {
-        // Draw a simple rectangle to represent the settings window
-        SDL_FRect windowRect = {60.0f, 60.0f, 400.0f, 300.0f};
-        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-        SDL_RenderFillRect(renderer, &windowRect);
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-        SDL_RenderRect(renderer, &windowRect);
-    }
 
     SDL_RenderPresent(renderer);
 }
@@ -322,17 +304,20 @@ void App::renderSchematic() {
         }
     }
 }
+
 int App::run() {
     if (!init()) return -1;
 
     // Load a starting netlist via your command parser (adjust path)
     {
         CommandParser parser(&graph, &nodeManager, &simRunner);
+        parser.onPlotData = [this](const PlotData& pd){ this->showPlot(pd); };
+
         parser.onScopeLoad = [this](const std::string& p, double Fs, double t, int c){
             this->loadAndPlotSignal(p, Fs, t, c);
         };
         parser.onScopeClear = [this](){ this->plotter.clear(); };
-        parser.parseCommand("load schematics/rc_step.txt");
+//        parser.parseCommand("load schematics/rc_step.txt");
 
         // Run once so there's a plot on screen
         double stopTime        = 0.05;
@@ -355,3 +340,5 @@ int App::run() {
     cleanup();
     return 0;
 }
+
+

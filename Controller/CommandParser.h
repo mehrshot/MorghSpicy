@@ -58,7 +58,15 @@ public:
     std::function<void(const std::string& path, double Fs, double tStop, int chunk)> onScopeLoad;
     std::function<void()> onScopeClear;
 
-// New wrapper that adds 'scope' commands then falls back to your legacy parser
+    // --- Plot callbacks (bridge to App/Simulation) ---
+    std::function<void(int n_pos, int n_neg)> onPlotVoltageNodes;     // V(n_pos) - V(n_neg or GND)
+    std::function<void(const std::string& element)> onPlotCurrentElement; // I(element)
+    std::function<void(const std::string& element)> onPlotPowerElement;   // P(element)
+
+    std::function<void(const PlotData&)> onPlotData;\
+
+
+    // New wrapper that adds 'scope' commands then falls back to your legacy parser
     void parseCommand(const std::string& line);
 
     void parseCommandCore(const std::string& line);

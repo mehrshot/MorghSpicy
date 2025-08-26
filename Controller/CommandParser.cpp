@@ -480,7 +480,6 @@ void CommandParser::parseCommandCore(const std::string& line) {
     }
 
 void CommandParser::parseCommand(const std::string& line) {
-    // --- Minimal, safe whitespace tokenizer ---
     auto split_ws = [](const std::string& s){
         std::vector<std::string> out; out.reserve(8);
         std::istringstream iss(s); std::string w;
@@ -497,43 +496,58 @@ void CommandParser::parseCommand(const std::string& line) {
 
     const auto parts = split_ws(line);
     if (!parts.empty() && parts[0] == "scope") {
-        // scope load path=<file> Fs=10000 t=0.1 chunk=8192
-        // scope clear
         if (parts.size() >= 2 && parts[1] == "load") {
-            std::string path;
-            double Fs   = 1000.0;
-            double tStop= 1.0;
-            int    chunk= 4096;
-
+            std::string path; double Fs = 10000.0, tStop = 0.1; int chunk = 8192;
             for (size_t i = 2; i < parts.size(); ++i) {
-                const auto& s = parts[i];
-                const auto  eq = s.find('=');
+                auto& tok = parts[i];
+                auto eq = tok.find('=');
                 if (eq == std::string::npos) continue;
-                const auto  k = s.substr(0, eq);
-                const auto  v = s.substr(eq + 1);
-                if      (k == "path")  path  = v;
-                else if (k == "Fs")    Fs    = std::stod(v);
-                else if (k == "t")     tStop = std::stod(v);
-                else if (k == "chunk") chunk = std::stoi(v);
+                std::string k = tok.substr(0, eq), v = tok.substr(eq+1);
+                if (k == "path") path = v;
+                else if (k == "Fs") Fs = parseValueWithPrefix(v);
+                else if (k == "t") tStop = parseValueWithPrefix(v);
+                else if (k == "chunk") chunk = (int)parseValueWithPrefix(v);
             }
-
             if (onScopeLoad) onScopeLoad(path, Fs, tStop, chunk);
-            else std::cout << "[scope] load path=" << path << " Fs=" << Fs
-                           << " t=" << tStop << " chunk=" << chunk
-                           << " (no callback wired)\n";
-            return; // handled
+            return;
         }
         if (parts.size() >= 2 && parts[1] == "clear") {
             if (onScopeClear) onScopeClear();
-            else std::cout << "[scope] clear (no callback wired)\n";
-            return; // handled
+            return;
         }
-        // Unknown scope subcommand -> fall through to legacy
     }
 
-    // Not a 'scope' command (or unknown subcmd): use your original parser
+    if (cmd == "plot") {
+        std::string what; if (!(in >> what)) { return; }
+        for (auto& c : what) c = char(std::tolower(c));
+
+        double tstep = 1e-5, tstop = 0.05, tmax = 1e-3;
+
+        if (what == "v" || what == "voltage") {
+            std::string npos, nneg;
+            if (!(in >> npos)) { return; }
+            std::vector<OutputVariable> vars;
+            vars.push_back({OutputVariable::VOLTAGE, npos});
+            if (in >> nneg) vars.push_back({OutputVariable::VOLTAGE, nneg});
+            PlotData pd = simRunner->runTransient(tstep, tstop, tmax, vars);
+            if (onPlotData) onPlotData(pd);
+            return;
+        }
+
+        if (what == "i" || what == "current") {
+            std::string elem; if (!(in >> elem)) { return; }
+            std::vector<OutputVariable> vars = { {OutputVariable::CURRENT, elem} };
+            PlotData pd = simRunner->runTransient(tstep, tstop, tmax, vars);
+            if (onPlotData) onPlotData(pd);
+            return;
+        }
+
+        return;
+    }
+
     parseCommandCore(line);
 }
+
 
 void CommandParser::handlePrintCommand(std::istringstream& iss) {
     std::string analysis_type;
