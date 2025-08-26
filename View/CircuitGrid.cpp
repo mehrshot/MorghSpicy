@@ -12,12 +12,14 @@
 
 namespace View {
 
-    CircuitGrid::CircuitGrid(SDL_Window* win,Graph* g, NodeManager* nm) : window(win),graph(g), nm(nm) {
+    CircuitGrid::CircuitGrid(SDL_Window* win, Graph* g, NodeManager* n, CommandParser* p)
+            : window(win), graph(g), nm(n), parser(p) { // اینجا p اضافه و مقداردهی بشه
         if (TTF_Init() == -1) {
             std::cerr << "SDL_ttf could not initialize! SDL_Error: " << SDL_GetError() << "\n";
             return;
         }
-        loadFont("arial.ttf", 14); // فرض بر این است که فایل arial.ttf در کنار اجرایی وجود دارد
+        loadFont("assets/roboto.ttf", 14);
+        if (!font) font = TTF_OpenFont("C:/Windows/Fonts/arial.ttf", 14);
     }
      // دیستراکتور
     CircuitGrid::~CircuitGrid() {
@@ -85,150 +87,83 @@ namespace View {
     std::cout << "[Edit] Rename: type new name, Enter to confirm, Esc to cancel\n";
 }
 
-void CircuitGrid::startEditValue() {
-    if (!selectedIndex) return;
-    auto& pe = staged[*selectedIndex];
-    // Wire/Ground مقدار ندارند
-    if (pe.kind == "Wire" || pe.kind == "Ground") return;
-    editing = true; editField = EditField::Value;
-    inputBuffer = pe.valueStr;
-    SDL_StartTextInput(window);
-    std::cout << "[Edit] New value (e.g., 10k, 1u, 5): Enter to confirm, Esc to cancel\n";
-}
+    void CircuitGrid::startEditValue() {
+        if (!selectedIndex) return;
+        auto& pe = staged[*selectedIndex];
+        if (pe.kind == "Wire" || pe.kind == "Ground") return;
+        editing = true;
+        editField = EditField::Value;
+        inputBuffer = pe.valueStr;
+        SDL_StartTextInput(window);
+        std::cout << "[Edit] New value: Enter to confirm, Esc to cancel\n";
+    }
 
-void CircuitGrid::commitEdit() {
-    if (!selectedIndex) { cancelEdit(); return; }
-    auto& pe = staged[*selectedIndex];
-    if (editField == EditField::Name) {
-        std::string s = trim(inputBuffer);
-        if (!s.empty()) {
-            pe.name = s;
-            std::cout << "[Edit] Renamed to: " << pe.name << "\n";
-        }
-    } else if (editField == EditField::Value) {
-        std::string s = trim(inputBuffer);
-        if (pe.kind == "Diode") {
-            // مدل دیود رشته‌ای است
-            if (!s.empty()) pe.valueStr = s;
-            std::cout << "[Edit] Diode model: " << pe.valueStr << "\n";
-        } else {
-            auto v = parseEng(s);
+    void CircuitGrid::commitEdit() {
+        if (!selectedIndex) { cancelEdit(); return; }
+        auto& pe = staged[*selectedIndex];
+        if (editField == EditField::Name) {
+            pe.name = inputBuffer;
+        } else if (editField == EditField::Value) {
+            auto v = CommandParser::parseValueWithPrefix(inputBuffer);
             if (v.has_value()) {
                 pe.value = *v;
-                pe.valueStr = s;
-                std::cout << "[Edit] Value set: " << pe.valueStr << " -> " << pe.value << "\n";
+                pe.valueStr = inputBuffer;
+                std::cout << "[Edit] Value set to: " << pe.valueStr << " -> " << pe.value << "\n";
             } else {
-                std::cout << "[Edit] Invalid value: " << s << " (kept: " << pe.valueStr << ")\n";
+                std::cout << "[Edit] Invalid value: " << inputBuffer << "\n";
             }
         }
+        cancelEdit();
     }
-    cancelEdit();
-}
 
 void CircuitGrid::cancelEdit() {
     editing = false; editField = EditField::None; inputBuffer.clear();
     SDL_StopTextInput(window);
 }
 
-std::string CircuitGrid::trim(const std::string& s) {
-    size_t i=0, j=s.size();
-    while (i<j && std::isspace((unsigned char)s[i])) ++i;
-    while (j>i && std::isspace((unsigned char)s[j-1])) --j;
-    return s.substr(i, j-i);
-}
-
-std::optional<double> CircuitGrid::parseEng(const std::string& sraw) {
-    if (sraw.empty()) return std::nullopt;
-    std::string s; s.reserve(sraw.size());
-    // normalize
-    for (char c : sraw) {
-        if (!std::isspace((unsigned char)c)) s.push_back(c);
-    }
-    // lowercase, but keep 'e' in sci
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::tolower(c); });
-
-    // handle 'meg' explicitly
-    double mult = 1.0;
-    auto ends_with = [&](const std::string& suf){
-        return s.size() >= suf.size() && s.compare(s.size()-suf.size(), suf.size(), suf) == 0;
-    };
-
-    if (ends_with("meg")) { mult = 1e6; s.erase(s.size()-3); }
-    else if (ends_with("g")) { mult = 1e9; s.pop_back(); }
-    else if (ends_with("m")) { mult = 1e6; s.pop_back(); } // 'M' اشتباه کاربر؛ اینجا m=1e-3 در SI است
-    else if (ends_with("k")) { mult = 1e3; s.pop_back(); }
-    else if (ends_with("u") || ends_with("µ")) { mult = 1e-6; s.pop_back(); }
-    else if (ends_with("n")) { mult = 1e-9; s.pop_back(); }
-    else if (ends_with("p")) { mult = 1e-12; s.pop_back(); }
-    else if (ends_with("f")) { mult = 1e-15; s.pop_back(); }
-    // اگر هیچ پسوندی نبود، mult=1
-
-    try {
-        double base = std::stod(s); // اجازه‌ی 1e-3 هم می‌دهد
-        return base * mult;
-    } catch (...) { return std::nullopt; }
-}
-
 
     void CircuitGrid::handleEvent(const SDL_Event& e) {
-    // --- منطق حالت ویرایش ---
-    // اگر در حال ویرایش هستیم، فقط رویدادهای مربوط به ویرایش را 처리 می‌کنیم
-    if (editing) {
-        if (e.type == SDL_EVENT_KEY_DOWN) {
-            if (e.key.key == SDLK_RETURN) {
-                commitEdit();
-            } else if (e.key.key == SDLK_ESCAPE) {
-                cancelEdit();
-            } else if (e.key.key == SDLK_BACKSPACE) {
-                if (!inputBuffer.empty()) inputBuffer.pop_back();
+        if (editing) {
+            if (e.type == SDL_EVENT_KEY_DOWN) {
+                if (e.key.key == SDLK_RETURN) commitEdit();
+                else if (e.key.key == SDLK_ESCAPE) cancelEdit();
+                else if (e.key.key == SDLK_BACKSPACE && !inputBuffer.empty()) inputBuffer.pop_back();
+            } else if (e.type == SDL_EVENT_TEXT_INPUT) {
+                inputBuffer += e.text.text;
             }
-        } else if (e.type == SDL_EVENT_TEXT_INPUT) {
-            if (e.text.text) inputBuffer += e.text.text;
-        }
-        return; // <-- مهم: از اجرای بقیه کد جلوگیری می‌کند
-    }
-
-    // --- منطق حالت عادی (وقتی در حال ویرایش نیستیم) ---
-    if (e.type == SDL_EVENT_KEY_DOWN) {
-        // کامیت کردن کل مدار با Enter
-        if (e.key.key == SDLK_RETURN) {
-            commitToModel(graph, nm);
-            staged.clear();
-            std::cout << "Committed staged elements to Graph/NodeManager\n";
             return;
         }
 
-        // شروع ویرایش با N, V یا حذف با Delete
-        if (selectedIndex.has_value()) {
-            if (e.key.key == SDLK_N) { startEditName(); return; }
-            if (e.key.key == SDLK_V) { startEditValue(); return; }
-            if (e.key.key == SDLK_DELETE) {
-                std::cout << "[Grid] Deleted: " << staged[*selectedIndex].name << "\n";
-                staged.erase(staged.begin() + *selectedIndex);
-                selectedIndex.reset();
-                return;
+        if (e.type == SDL_EVENT_KEY_DOWN) {
+            if (selectedIndex.has_value()) {
+                if (e.key.key == SDLK_V) { startEditValue(); return; }
+                if (e.key.key == SDLK_DELETE || e.key.key == SDLK_BACKSPACE) {
+                    staged.erase(staged.begin() + *selectedIndex);
+                    selectedIndex.reset();
+                    return;
+                }
+            }
+            switch (e.key.key) {
+                case SDLK_R: currentTool = ToolKind::Resistor; std::cout << "Tool: Resistor\n"; break;
+                case SDLK_C: currentTool = ToolKind::Capacitor; std::cout << "Tool: Capacitor\n"; break;
+                case SDLK_L: currentTool = ToolKind::Inductor; std::cout << "Tool: Inductor\n"; break;
+                case SDLK_V: currentTool = ToolKind::VoltageSource; std::cout << "Tool: VSource\n"; break;
+                case SDLK_I: currentTool = ToolKind::CurrentSource; std::cout << "Tool: ISource\n"; break;
+                case SDLK_D: currentTool = ToolKind::Diode; std::cout << "Tool: Diode\n"; break;
+                case SDLK_W: currentTool = ToolKind::Wire; std::cout << "Tool: Wire\n"; break;
+                case SDLK_G: currentTool = ToolKind::Ground; std::cout << "Tool: Ground\n"; break;
+                default: break;
             }
         }
 
-        // تغییر نوع قطعه جاری
-        switch (e.key.key) {
-            case SDLK_R: currentKind = "Resistor"; break;
-            case SDLK_C: currentKind = "Capacitor"; break;
-            case SDLK_L: currentKind = "Inductor"; break;
-            case SDLK_V: currentKind = "VoltageSource"; break;
-            case SDLK_I: currentKind = "CurrentSource"; break;
-            case SDLK_D: currentKind = "Diode"; break;
-            case SDLK_W: currentKind = "Wire"; break;
-            case SDLK_G: currentKind = "Ground"; break;
-            default: break;
-        }
-    }
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+            float mx = e.button.x;
+            float my = e.button.y;
+            uint64_t now = SDL_GetTicks();
+            bool isDoubleClick = (now - lastClickTicks < 400) && (std::abs(mx - lastClickPos.x) < 5 && std::abs(my - lastClickPos.y) < 5);
+            lastClickTicks = now;
+            lastClickPos = {mx, my};
 
-    // منطق کلیک‌های ماوس
-    if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-        if (e.button.button == SDL_BUTTON_RIGHT) {
-            // ... (کد انتخاب قطعه با راست‌کلیک که قبلاً داشتید، اینجا بدون تغییر باقی می‌ماند)
-            float mx, my; SDL_GetMouseState(&mx, &my);
             auto distToSeg = [](float x, float y, float x1, float y1, float x2, float y2){
                 const float A = x - x1, B = y - y1;
                 const float C = x2 - x1, D = y2 - y1;
@@ -250,44 +185,70 @@ std::optional<double> CircuitGrid::parseEng(const std::string& sraw) {
                 float d = distToSeg(mx, my, x1, y1, x2, y2);
                 if (d < bestd) { bestd = d; best = i; }
             }
+
             if (best != -1 && bestd <= 12.0f) {
                 selectedIndex = best;
-                std::cout << "[Grid] Selected: " << staged[best].name
-                          << " (" << staged[best].kind << "), value=" << staged[best].valueStr << "\n";
+                if (isDoubleClick) {
+                    startEditValue();
+                    return;
+                }
             } else {
                 selectedIndex.reset();
             }
-        } else if (e.button.button == SDL_BUTTON_LEFT) {
-            // ... (کد قرار دادن قطعه با چپ‌کلیک که قبلاً داشتید، اینجا بدون تغییر باقی می‌ماند)
-            float mx, my; SDL_GetMouseState(&mx, &my);
-            int gx = mx / cellSize;
-            int gy = my / cellSize;
-            if (!pendingFirstNode.has_value()) {
-                pendingFirstNode = std::make_pair(gx, gy);
-            } else {
-                int startX = pendingFirstNode->first;
-                int startY = pendingFirstNode->second;
-                int snapX = gx, snapY = gy;
-                if (abs(gx - startX) > abs(gy - startY)) { snapY = startY; } else { snapX = startX; }
 
-                PlacedElement pe;
-                pe.kind = currentKind;
-                int id = ++kindCounters[currentKind];
-                std::string prefix = std::string(1, std::toupper(currentKind[0]));
-                pe.name = prefix + std::to_string(id);
-                if (currentKind == "Resistor")      { pe.value = 1000.0;   pe.valueStr = "1k"; }
-                else if (currentKind == "Capacitor"){ pe.value = 1e-6;     pe.valueStr = "1u"; }
-                // ... بقیه مقادیر پیش‌فرض
+            if (e.button.button == SDL_BUTTON_LEFT && !isDoubleClick) {
+                int gx = mx / cellSize;
+                int gy = my / cellSize;
+                if (!pendingFirstNode.has_value()) {
+                    pendingFirstNode = std::make_pair(gx, gy);
+                    if (currentTool == ToolKind::Ground) {
+                        PlacedElement pe;
+                        pe.kind = "Ground";
+                        pe.name = "GND";
+                        pe.n1 = "N" + std::to_string(gx) + "_" + std::to_string(gy);
+                        pe.n2 = pe.n1;
+                        pe.gx1 = gx; pe.gy1 = gy; pe.gx2 = gx; pe.gy2 = gy;
+                        staged.push_back(pe);
+                        pendingFirstNode.reset();
+                    }
+                } else {
+                    int startX = pendingFirstNode->first;
+                    int startY = pendingFirstNode->second;
+                    int snapX = gx, snapY = gy;
+                    if (abs(gx - startX) > abs(gy - startY)) { snapY = startY; } else { snapX = startX; }
 
-                pe.n1 = "N" + std::to_string(startX) + "_" + std::to_string(startY);
-                pe.n2 = "N" + std::to_string(snapX) + "_" + std::to_string(snapY);
-                pe.gx1 = startX; pe.gy1 = startY; pe.gx2 = snapX; pe.gy2 = snapY;
-                staged.push_back(pe);
+                    if (startX == snapX && startY == snapY) {
+                        pendingFirstNode.reset();
+                        return;
+                    }
+
+                    PlacedElement pe;
+                    pe.n1 = "N" + std::to_string(startX) + "_" + std::to_string(startY);
+                    pe.n2 = "N" + std::to_string(snapX) + "_" + std::to_string(snapY);
+                    pe.gx1 = startX; pe.gy1 = startY; pe.gx2 = snapX; pe.gy2 = snapY;
+
+                    switch (currentTool) {
+                        case ToolKind::Resistor: pe.kind = "Resistor"; pe.valueStr = "1k"; break;
+                        case ToolKind::Capacitor: pe.kind = "Capacitor"; pe.valueStr = "1u"; break;
+                        case ToolKind::Inductor: pe.kind = "Inductor"; pe.valueStr = "1m"; break;
+                        case ToolKind::VoltageSource: pe.kind = "VoltageSource"; pe.valueStr = "5"; break;
+                        case ToolKind::CurrentSource: pe.kind = "CurrentSource"; pe.valueStr = "1"; break;
+                        case ToolKind::Diode: pe.kind = "Diode"; pe.valueStr = "D"; break;
+                        case ToolKind::Wire: pe.kind = "Wire"; pe.valueStr = ""; break;
+                        default: pendingFirstNode.reset(); return;
+                    }
+                    pe.value = CommandParser::parseValueWithPrefix(pe.valueStr).value_or(0.0);
+                    kindCounters[currentTool]++;
+                    pe.name = std::string(1, pe.kind[0]) + std::to_string(kindCounters[currentTool]);
+
+                    staged.push_back(pe);
+                    pendingFirstNode.reset();
+                }
+            } else if (e.button.button == SDL_BUTTON_RIGHT) {
                 pendingFirstNode.reset();
             }
         }
     }
-}
 
     void CircuitGrid::render(SDL_Renderer* ren) {
     // --- گرید ---
@@ -458,34 +419,23 @@ std::optional<double> CircuitGrid::parseEng(const std::string& sraw) {
 }
 
 
-    void CircuitGrid::commitToModel(Graph* g, NodeManager* nm) {
-    for (auto& pe : staged) {
-        if (pe.kind == "Wire") {
-            nm->connect(pe.n1, pe.n2);
-            continue;
-        }
+    void CircuitGrid::commitToModel() {
+        graph->clear();
+        nm = new NodeManager();
+        parser = new CommandParser(graph, nm, nullptr);
 
-        int n1 = nm->getOrCreateNodeId(pe.n1);
-        int n2 = nm->getOrCreateNodeId(pe.n2);
-
-        if (pe.kind == "Resistor") {
-            g->addElement(new Resistor(pe.name, n1, n2, pe.value));
-        } else if (pe.kind == "Capacitor") {
-            g->addElement(new Capacitor(pe.name, n1, n2, pe.value));
-        } else if (pe.kind == "Inductor") {
-            g->addElement(new Inductor(pe.name, n1, n2, pe.value));
-        } else if (pe.kind == "VoltageSource") {
-            g->addElement(new VoltageSource(pe.name, n1, n2, pe.value));
-        } else if (pe.kind == "CurrentSource") {
-            g->addElement(new CurrentSource(pe.name, n1, n2, pe.value));
-        } else if (pe.kind == "Diode") {
-            std::string model = pe.valueStr.empty() ? "default" : pe.valueStr;
-            g->addElement(new Diode(pe.name, n1, n2, model));
-        } else if (pe.kind == "Ground") {
-            nm->assignNodeAsGND(pe.n1); // نود n1 زمین شود
+        for (auto& pe : staged) {
+            std::string cmd;
+            if (pe.kind == "Wire") {
+                cmd = "connect " + pe.n1 + " " + pe.n2;
+            } else if (pe.kind == "Ground") {
+                cmd = "add GND " + pe.n1;
+            } else {
+                cmd = "add " + pe.name + " " + pe.n1 + " " + pe.n2 + " " + pe.valueStr;
+            }
+            parser->parseCommand(cmd);
         }
+        std::cout << "Circuit committed to model. " << staged.size() << " elements processed.\n";
     }
-}
-
 
 } // namespace View

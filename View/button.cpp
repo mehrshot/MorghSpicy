@@ -2,71 +2,50 @@
 #include <utility>
 
 Button::Button(int x, int y, int w, int h, std::string text)
-// Added explicit (float) casts to prevent narrowing error
-        : rect{ (float)x, (float)y, (float)w, (float)h }, buttonText(std::move(text)) {}
+        : rect{(float)x,(float)y,(float)w,(float)h}, buttonText(std::move(text)) {}
 
 bool Button::handleEvent(const SDL_Event& e) {
     bool clicked = false;
-    if (e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
-        float mouseX, mouseY;
-        SDL_GetMouseState(&mouseX, &mouseY);
-
-        bool isInside = (mouseX >= rect.x && mouseX <= rect.x + rect.w &&
-                         mouseY >= rect.y && mouseY <= rect.y + rect.h);
-
-        if (!isInside) {
+    if (e.type == SDL_EVENT_MOUSE_MOTION ||
+        e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+        e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+        float mx, my;
+        SDL_GetMouseState(&mx, &my);
+        bool inside = (mx >= rect.x && mx <= rect.x + rect.w &&
+                       my >= rect.y && my <= rect.y + rect.h);
+        if (!inside) {
             currentState = State::NORMAL;
         } else {
-            if (e.type == SDL_EVENT_MOUSE_MOTION) {
-                if (currentState != State::PRESSED) {
-                    currentState = State::HOVER;
-                }
-            } else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) {
-                currentState = State::PRESSED;
-            } else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) {
-                if (currentState == State::PRESSED) {
-                    clicked = true;
-                    currentState = State::HOVER;
-                }
-            }
+            if (e.type == SDL_EVENT_MOUSE_MOTION) currentState = State::HOVER;
+            else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) currentState = State::PRESSED;
+            else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) { currentState = State::HOVER; clicked = true; }
         }
     }
     return clicked;
 }
 
 void Button::render(SDL_Renderer* renderer) {
-    SDL_Color currentColor;
-    switch (currentState) {
-        case State::HOVER:
-            currentColor = colorHover;
-            break;
-        case State::PRESSED:
-            currentColor = colorPressed;
-            break;
-        case State::NORMAL:
-        default:
-            currentColor = colorNormal;
-            break;
-    }
+    SDL_Color col = colorNormal;
+    if (currentState == State::HOVER) col = colorHover;
+    else if (currentState == State::PRESSED) col = colorPressed;
 
-    SDL_SetRenderDrawColor(renderer, currentColor.r, currentColor.g, currentColor.b, currentColor.a);
+    SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, col.a);
     SDL_RenderFillRect(renderer, &rect);
-    if (!buttonText.empty() && font) {
-        SDL_Surface* textSurface = TTF_RenderText_Solid( font, buttonText.c_str(), {0, 0, 0, 255}); // Black text
-        if (textSurface) {
-            SDL_Texture* textTexture = SDL_CreateTextureFromSurface(renderer, textSurface);
-            if (textTexture) {
-                // Center the text inside the button
-                SDL_FRect textRect;
-                textRect.w = (float)textSurface->w;
-                textRect.h = (float)textSurface->h;
-                textRect.x = rect.x + (rect.w - textRect.w) / 2.0f;
-                textRect.y = rect.y + (rect.h - textRect.h) / 2.0f;
 
-                SDL_RenderTexture(renderer, textTexture, nullptr, &textRect);
-                SDL_DestroyTexture(textTexture);
+    if (!buttonText.empty() && font) {
+        SDL_Surface* surf = TTF_RenderText_Solid(font, buttonText.c_str(), (size_t)buttonText.size(), SDL_Color{0,0,0,255});
+        if (surf) {
+            SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
+            if (tex) {
+                SDL_FRect dst;
+                dst.w = (float)surf->w;
+                dst.h = (float)surf->h;
+                dst.x = rect.x + (rect.w - dst.w) * 0.5f;
+                dst.y = rect.y + (rect.h - dst.h) * 0.5f;
+                SDL_RenderTexture(renderer, tex, nullptr, &dst);
+                SDL_DestroyTexture(tex);
             }
-            SDL_DestroySurface(textSurface);
+            SDL_DestroySurface(surf);
         }
     }
 }

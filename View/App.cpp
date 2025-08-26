@@ -69,8 +69,15 @@ bool App::init() {
         return false;
     }
 
-    // --- اضافه شد: صفحه‌ی گرید ---
-    gridPage = std::make_unique<View::CircuitGrid>(window,&graph, &nodeManager);
+    if (!TTF_Init()) {
+        std::cerr << "TTF_Init failed: " << SDL_GetError() << "\n";
+    }
+    mainFont = TTF_OpenFont("assets/roboto.ttf", 16);
+    if (!mainFont) mainFont = TTF_OpenFont("C:/Windows/Fonts/arial.ttf", 16);
+    simSettingsButton.setFont(mainFont);
+
+
+    gridPage = std::make_unique<View::CircuitGrid>(window, &graph, &nodeManager, &parser);
 
 
 
@@ -341,4 +348,153 @@ int App::run() {
     return 0;
 }
 
+//std::string App::promptText(const std::string& title, const std::string& initial) {
+//    std::string buffer = initial;
+//    bool done = false;
+//    SDL_StartTextInput(window);
+//    while (!done) {
+//        SDL_Event e;
+//        while (SDL_PollEvent(&e)) {
+//            if (e.type == SDL_EVENT_QUIT) { SDL_StopTextInput(window); return ""; }
+//            if (e.type == SDL_EVENT_KEY_DOWN) {
+//                if (e.key.key == SDLK_RETURN) { done = true; break; }
+//                if (e.key.key == SDLK_ESCAPE) { SDL_StopTextInput(window); return ""; }
+//                if (e.key.key == SDLK_BACKSPACE) { if (!buffer.empty()) buffer.pop_back(); }
+//            }
+//            if (e.type == SDL_EVENT_TEXT_INPUT) {
+//                buffer += e.text.text;
+//            }
+//        }
+//        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 192);
+//        SDL_RenderClear(renderer);
+//        SDL_FRect r{80.0f, 80.0f, 600.0f, 180.0f};
+//        SDL_SetRenderDrawColor(renderer, 32, 32, 32, 255);
+//        SDL_RenderFillRect(renderer, &r);
+//        if (mainFont) {
+//            SDL_Surface* s1 = TTF_RenderText_Solid(mainFont, title.c_str(), (size_t)title.size(), SDL_Color{255,255,255,255});
+//            SDL_Texture* t1 = s1 ? SDL_CreateTextureFromSurface(renderer, s1) : nullptr;
+//            SDL_FRect d1{100.0f, 100.0f, s1 ? (float)s1->w : 0.0f, s1 ? (float)s1->h : 0.0f};
+//            if (t1) SDL_RenderTexture(renderer, t1, nullptr, &d1);
+//            SDL_Surface* s2 = TTF_RenderText_Solid(mainFont, buffer.c_str(), (size_t)buffer.size(), SDL_Color{200,255,200,255});
+//            SDL_Texture* t2 = s2 ? SDL_CreateTextureFromSurface(renderer, s2) : nullptr;
+//            SDL_FRect d2{100.0f, 160.0f, s2 ? (float)s2->w : 0.0f, s2 ? (float)s2->h : 0.0f};
+//            if (t2) SDL_RenderTexture(renderer, t2, nullptr, &d2);
+//            if (t1) SDL_DestroyTexture(t1);
+//            if (t2) SDL_DestroyTexture(t2);
+//            if (s1) SDL_DestroySurface(s1);
+//            if (s2) SDL_DestroySurface(s2);
+//        }
+//        SDL_RenderPresent(renderer);
+//    }
+//    SDL_StopTextInput(window);
+//    return buffer;
+//}
+//
+//int App::hitElementIndexAt(const SDL_FPoint& p) const {
+//    for (int i = (int)uiElements.size()-1; i >= 0; --i) {
+//        const auto& b = uiElements[i].bbox;
+//        if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return i;
+//    }
+//    return -1;
+//}
+//
+//void App::requestElementEdit(int idx) {
+//    if (idx < 0 || idx >= (int)uiElements.size()) return;
+//    auto& e = uiElements[idx];
+//    std::string v = promptText("Value for " + e.name, e.value.empty() ? "1k" : e.value);
+//    if (v.empty()) return;
+//    e.value = v;
+//    char kindChar = 'R';
+//    if (e.kind == ToolKind::Capacitor) kindChar = 'C';
+//    else if (e.kind == ToolKind::Inductor) kindChar = 'L';
+//    else if (e.kind == ToolKind::VSource) kindChar = 'V';
+//    else if (e.kind == ToolKind::ISource) kindChar = 'I';
+//    std::ostringstream ss;
+//    ss << "value " << e.name << " " << e.value;
+//    parser.parseCommand(ss.str());
+//}
+//
+//void App::applyPlacement(ToolKind kind, int n1, int n2, const SDL_FPoint& a, const SDL_FPoint& b) {
+//    std::string base = "X";
+//    char kindChar = 'R';
+//    if (kind == ToolKind::Resistor) { base = "R"; kindChar = 'R'; }
+//    else if (kind == ToolKind::Capacitor) { base = "C"; kindChar = 'C'; }
+//    else if (kind == ToolKind::Inductor) { base = "L"; kindChar = 'L'; }
+//    else if (kind == ToolKind::VSource) { base = "V"; kindChar = 'V'; }
+//    else if (kind == ToolKind::ISource) { base = "I"; kindChar = 'I'; }
+//    int idx = 1;
+//    for (auto& u : uiElements) if (u.kind == kind) idx++;
+//    std::string name = base + std::to_string(idx);
+//    std::string v = promptText("Value for " + name, kind == ToolKind::Resistor ? "1k" : (kind == ToolKind::Capacitor ? "1u" : (kind == ToolKind::Inductor ? "1m" : "5")));
+//    if (v.empty()) return;
+//    SDL_FRect bbox;
+//    bbox.x = std::min(a.x, b.x);
+//    bbox.y = std::min(a.y, b.y);
+//    bbox.w = std::abs(a.x - b.x);
+//    bbox.h = std::abs(a.y - b.y);
+//    if (bbox.w < 20) bbox.w = 20;
+//    if (bbox.h < 20) bbox.h = 20;
+//    UiElement ue;
+//    ue.name = name;
+//    ue.kind = kind;
+//    ue.bbox = bbox;
+//    ue.n1 = n1;
+//    ue.n2 = n2;
+//    ue.value = v;
+//    uiElements.push_back(ue);
+//    std::ostringstream ss;
+//    ss << "add " << kindChar << " " << name << " " << n1 << " " << n2 << " " << v;
+//    parser.parseCommand(ss.str());
+//}
+//
+//void App::handleMouseDown(const SDL_MouseButtonEvent& e) {
+//    SDL_FPoint p{(float)e.x, (float)e.y};
+//    uint64_t now = SDL_GetTicks();
+//    bool dbl = (now - lastClickTicks < 350) && (std::abs(p.x - lastClickPos.x) < 8 && std::abs(p.y - lastClickPos.y) < 8);
+//    lastClickTicks = now;
+//    lastClickPos = p;
+//
+//    if (dbl) {
+//        int idx = hitElementIndexAt(p);
+//        if (idx >= 0) { requestElementEdit(idx); return; }
+//    }
+//
+//    if (currentTool == ToolKind::Resistor || currentTool == ToolKind::Capacitor || currentTool == ToolKind::Inductor || currentTool == ToolKind::VSource || currentTool == ToolKind::ISource) {
+//        if (!placing) {
+//            placePos1 = p;
+//            placeNode1 = findOrCreateNodeAt(p);
+//            placing = true;
+//            return;
+//        } else {
+//            int n2 = findOrCreateNodeAt(p);
+//            applyPlacement(currentTool, placeNode1, n2, placePos1, p);
+//            placing = false;
+//            placeNode1 = -1;
+//            return;
+//        }
+//    }
+//}
+//
+//static inline long long makeKey(int gx, int gy) {
+//    return ( (long long)gx << 32 ) ^ (unsigned int)gy;
+//}
+//
+//SDL_FPoint App::snapToGrid(const SDL_FPoint& p) const {
+//    SDL_FPoint out;
+//    out.x = std::round(p.x / gridSize) * gridSize;
+//    out.y = std::round(p.y / gridSize) * gridSize;
+//    return out;
+//}
+//
+//int App::findOrCreateNodeAt(const SDL_FPoint& p) {
+//    SDL_FPoint s = snapToGrid(p);
+//    int gx = (int)std::lround(s.x / gridSize);
+//    int gy = (int)std::lround(s.y / gridSize);
+//    long long k = makeKey(gx, gy);
+//    auto it = gridNode.find(k);
+//    if (it != gridNode.end()) return it->second;
+//    int id = nextNodeId++;
+//    gridNode[k] = id;
+//    return id;
+//}
 

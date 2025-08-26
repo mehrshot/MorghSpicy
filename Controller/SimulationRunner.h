@@ -82,6 +82,8 @@ public:
     PlotData runPhaseSweep(const PhaseSweepSettings& s,
                            const std::vector<OutputVariable>& what);
 
+    void setElementValue(const std::string& name, double value);\
+
 };
 
 

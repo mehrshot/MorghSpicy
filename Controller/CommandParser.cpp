@@ -34,11 +34,11 @@ bool isNumber(const std::string& s) {
     return std::regex_match(s, pattern);
 }
 
-double parseValueWithPrefix(const std::string& str) {
+std::optional<double> CommandParser::parseValueWithPrefix(const std::string& str) {
+    if (str.empty()) return std::nullopt;
     try {
         double factor = 1.0;
         std::string numPart = str;
-
         char last = tolower(str.back());
 
         switch (last) {
@@ -48,16 +48,16 @@ double parseValueWithPrefix(const std::string& str) {
             case 'n': factor = 1e-9; numPart = str.substr(0, str.size()-1); break;
             case 'p': factor = 1e-12; numPart = str.substr(0, str.size()-1); break;
             case 'g': factor = 1e9; numPart = str.substr(0, str.size()-1); break;
-            case 'h': factor = 1e2; numPart = str.substr(0, str.size()-1); break;
             case 't': factor = 1e12; numPart = str.substr(0, str.size()-1); break;
             default:
                 if (isNumber(str)) return std::stod(str);
                 break;
         }
 
+        if (numPart.empty() || !isNumber(numPart)) return std::nullopt;
         return std::stod(numPart) * factor;
     } catch (...) {
-        return -1e99; // خطا
+        return std::nullopt;
     }
 }
 
@@ -179,13 +179,13 @@ void CommandParser::parseCommandCore(const std::string& line) {
                 return;
             }
 
-            double v1 = parseValueWithPrefix(param_tokens[0]);
-            double v2 = parseValueWithPrefix(param_tokens[1]);
-            double td = parseValueWithPrefix(param_tokens[2]);
-            double tr = parseValueWithPrefix(param_tokens[3]);
-            double tf = parseValueWithPrefix(param_tokens[4]);
-            double pw = parseValueWithPrefix(param_tokens[5]);
-            double per = parseValueWithPrefix(param_tokens[6]);
+            double v1 = parseValueWithPrefix(param_tokens[0]).value_or(0.0);
+            double v2 = parseValueWithPrefix(param_tokens[1]).value_or(0.0);
+            double td = parseValueWithPrefix(param_tokens[2]).value_or(0.0);
+            double tr = parseValueWithPrefix(param_tokens[3]).value_or(0.0);
+            double tf = parseValueWithPrefix(param_tokens[4]).value_or(0.0);
+            double pw = parseValueWithPrefix(param_tokens[5]).value_or(0.0);
+            double per = parseValueWithPrefix(param_tokens[6]).value_or(0.0);
 
             int n1 = nodeManager->resolveId(n1_str);
             int n2 = nodeManager->resolveId(n2_str);
@@ -224,7 +224,7 @@ void CommandParser::parseCommandCore(const std::string& line) {
                 std::cerr << "Error: Syntax error for VCCS/VCVS\n";
                 return;
             }
-            double gain = parseValueWithPrefix(gain_str);
+            double gain = parseValueWithPrefix(gain_str).value_or(0.0);
             if (gain == -1e99) {
                 std::cerr << "Error: Invalid gain value\n";
                 return;
@@ -250,7 +250,7 @@ void CommandParser::parseCommandCore(const std::string& line) {
                 std::cerr << "Error: Syntax error for CCCS/CCVS\n";
                 return;
             }
-            double gain = parseValueWithPrefix(gain_str);
+            double gain = parseValueWithPrefix(gain_str).value_or(0.0);
             if (gain == -1e99) {
                 std::cerr << "Error: Invalid gain value\n";
                 return;
@@ -274,14 +274,14 @@ void CommandParser::parseCommandCore(const std::string& line) {
                 return;
             }
 
-            double voffset = parseValueWithPrefix(voffset_str);
-            double vamp = parseValueWithPrefix(vamp_str);
-            double freq = parseValueWithPrefix(freq_str);
+            double voffset = parseValueWithPrefix(voffset_str).value_or(0.0);
+            double vamp = parseValueWithPrefix(vamp_str).value_or(0.0);
+            double freq = parseValueWithPrefix(freq_str).value_or(0.0);
             double phase = 0.0;
 
             std::string optional;
             if (iss >> optional) {
-                phase = parseValueWithPrefix(optional);
+                phase = parseValueWithPrefix(optional).value_or(0.0);
             }
 
             int n1 = nodeManager->resolveId(n1_str);
@@ -310,7 +310,7 @@ void CommandParser::parseCommandCore(const std::string& line) {
             }
         }
 
-        double value = parseValueWithPrefix(value_str);
+        double value = parseValueWithPrefix(value_str).value_or(-1e99);
 
         if ((type != 'V' && type != 'I' && value <= 0) || value == -1e99) {
             std::string typeName = "Value";
@@ -493,6 +493,8 @@ void CommandParser::parseCommand(const std::string& line) {
 
     if (cmd == "label") { handleLabel(in); return; }
     if (cmd == "connect" || cmd == "short") { handleConnect(in); return; }
+    if (cmd == "value") { handleValue(in); return; }
+
 
     const auto parts = split_ws(line);
     if (!parts.empty() && parts[0] == "scope") {
@@ -504,9 +506,9 @@ void CommandParser::parseCommand(const std::string& line) {
                 if (eq == std::string::npos) continue;
                 std::string k = tok.substr(0, eq), v = tok.substr(eq+1);
                 if (k == "path") path = v;
-                else if (k == "Fs") Fs = parseValueWithPrefix(v);
-                else if (k == "t") tStop = parseValueWithPrefix(v);
-                else if (k == "chunk") chunk = (int)parseValueWithPrefix(v);
+                else if (k == "Fs") Fs = parseValueWithPrefix(v).value_or(1000.0);
+                else if (k == "t") tStop = parseValueWithPrefix(v).value_or(0.1);
+                else if (k == "chunk") chunk = static_cast<int>(parseValueWithPrefix(v).value_or(4096.0));
             }
             if (onScopeLoad) onScopeLoad(path, Fs, tStop, chunk);
             return;
@@ -559,9 +561,9 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
             std::cerr << "Error: Syntax error. Usage: print TRAN <tstep> <tstop> <tmaxstep> <var1> ..." << std::endl;
             return;
         }
-        double tstep = parseValueWithPrefix(tstep_str);
-        double tstop = parseValueWithPrefix(tstop_str);
-        double tmaxstep = parseValueWithPrefix(tmaxstep_str);
+        double tstep = parseValueWithPrefix(tstep_str).value_or(0.0);
+        double tstop = parseValueWithPrefix(tstop_str).value_or(0.0);
+        double tmaxstep = parseValueWithPrefix(tmaxstep_str).value_or(0.0);
 
         if (tstep <= 0 || tstop <= 0 || tmaxstep <= 0 || tstep > tstop) {
             std::cerr << "Error: Invalid time parameters for TRAN analysis." << std::endl;
@@ -599,9 +601,9 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
             std::cerr << "Error: Syntax error. Usage: print DC <SourceName> <Start> <End> <Increment> <var1>..." << std::endl;
             return;
         }
-        double start_val = parseValueWithPrefix(start_str);
-        double end_val = parseValueWithPrefix(end_str);
-        double inc_val = parseValueWithPrefix(inc_str);
+        double start_val = parseValueWithPrefix(start_str).value_or(0.0);
+        double end_val = parseValueWithPrefix(end_str).value_or(0.0);
+        double inc_val = parseValueWithPrefix(inc_str).value_or(0.0);
         if (inc_val <= 0) {
             std::cerr << "Error: Increment for DC sweep must be positive." << std::endl;
             return;
@@ -849,7 +851,7 @@ void CommandParser::handleAddComponent(const std::string& instance_name, const s
         int final_n1_id = nodeMap.at(n1_internal_str);
         int final_n2_id = nodeMap.at(n2_internal_str);
         std::string final_elem_name = instance_name + "." + elem_name_internal;
-        double value = parseValueWithPrefix(val_str_or_model); // Assumes val_str_or_model is a value
+        double value = parseValueWithPrefix(val_str_or_model).value_or(0.0);
 
         Element* new_elem = nullptr;
         char type = toupper(elem_name_internal[0]);
@@ -896,3 +898,14 @@ void CommandParser::handlePhase(std::istringstream& iss) {
     PlotData pd = simRunner->runPhaseSweep(s, outs);
     appPlot(pd, outs);
 }
+
+void CommandParser::handleValue(std::istringstream& iss) {
+    std::string name, valueExpr;
+    if (!(iss >> name >> valueExpr)) return;
+    if (!simRunner) return;
+    auto val_opt = parseValueWithPrefix(valueExpr);
+    if (val_opt) {
+        simRunner->setElementValue(name, *val_opt);
+    }
+}
+

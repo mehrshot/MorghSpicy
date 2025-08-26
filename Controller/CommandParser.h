@@ -9,6 +9,7 @@
 #include "Model/NodeManager.h"
 #include "Controller/SimulationRunner.h"
 #include <functional>
+#include <optional>
 
 class Graph;
 class NodeManager;
@@ -73,6 +74,11 @@ public:
 
     void handleAC(std::istringstream& iss);
     void handlePhase(std::istringstream& iss);
+
+    void handleValue(std::istringstream& iss);
+
+    static std::optional<double> parseValueWithPrefix(const std::string& str);
+
 
 };
 

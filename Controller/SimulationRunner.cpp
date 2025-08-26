@@ -463,3 +463,9 @@ PlotData SimulationRunner::runPhaseSweep(const PhaseSweepSettings& s,
 
     return plot;
 }
+
+void SimulationRunner::setElementValue(const std::string& name, double value) {
+    Element* e = graph->findElement(name);
+    if (e) e->value = value;
+}
+
