@@ -22,8 +22,7 @@ namespace View {
 
         std::string name;     // نام قابل ویرایش (R1, Rload, ...)
         std::string valueStr; // رشته‌ی مقدار (مثلا "10k", "1u", "default")
-        double      value = 0.0; // مقدار عددی (برای R/C/L/V/I)
-    };
+        double      value = 0.0; // مقدار عددی (برای R/C/L/V/I)    };
 
     class CircuitGrid {
     public:
