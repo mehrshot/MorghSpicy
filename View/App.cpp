@@ -5,6 +5,7 @@
 #include <iostream>
 #include <algorithm>
 #include <SDL3/SDL.h>
+#include <SDL3_ttf/SDL_ttf.h>
 
 #include "View/App.h"
 #include "Controller/CommandParser.h"
@@ -48,17 +49,25 @@ static std::vector<Point> toSeries(const std::vector<double>& xs,
 
 // ---------------------------------------------------------------
 
-App::App() : simRunner(&graph, &mnaSolver, &nodeManager) {}
+App::App() : simRunner(&graph, &mnaSolver, &nodeManager), parser(&graph, &nodeManager, &simRunner) {}
 
 bool App::init() {
-    if (!SDL_Init(SDL_INIT_VIDEO)) {               // SDL3: returns bool
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
+        return false;
+    }
+
+    if (TTF_Init() == -1) {
+        std::cerr << "TTF_Init failed: " << SDL_GetError() << "\n";
+        SDL_Quit();
         return false;
     }
 
     window = SDL_CreateWindow("MorghSpicy", 900, 650, SDL_WINDOW_RESIZABLE);
     if (!window) {
         std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << "\n";
+        TTF_Quit();
+        SDL_Quit();
         return false;
     }
     SDL_SetWindowPosition(window, 100, 100);
@@ -66,28 +75,42 @@ bool App::init() {
     renderer = SDL_CreateRenderer(window, nullptr);
     if (!renderer) {
         std::cerr << "SDL_CreateRenderer failed: " << SDL_GetError() << "\n";
+        SDL_DestroyWindow(window);
+        TTF_Quit();
+        SDL_Quit();
         return false;
     }
 
-    if (!TTF_Init()) {
-        std::cerr << "TTF_Init failed: " << SDL_GetError() << "\n";
-    }
     mainFont = TTF_OpenFont("assets/roboto.ttf", 16);
-    if (!mainFont) mainFont = TTF_OpenFont("C:/Windows/Fonts/arial.ttf", 16);
+    if (!mainFont) {
+        mainFont = TTF_OpenFont("C:/Windows/Fonts/arial.ttf", 16);
+    }
+    if (!mainFont) {
+        std::cerr << "Failed to load font! Both roboto.ttf and arial.ttf were not found." << std::endl;
+    }
+
     simSettingsButton.setFont(mainFont);
 
-
-    gridPage = std::make_unique<View::CircuitGrid>(window, &graph, &nodeManager, &parser);
-
-
+    gridPage = std::make_unique<View::CircuitGrid>(window, &graph, &nodeManager, &parser, mainFont);
 
     isRunning = true;
     return true;
 }
 
 void App::cleanup() {
-    if (renderer) { SDL_DestroyRenderer(renderer); renderer = nullptr; }
-    if (window)   { SDL_DestroyWindow(window);     window   = nullptr; }
+    if (mainFont) {
+        TTF_CloseFont(mainFont);
+        mainFont = nullptr;
+    }
+    if (renderer) {
+        SDL_DestroyRenderer(renderer);
+        renderer = nullptr;
+    }
+    if (window) {
+        SDL_DestroyWindow(window);
+        window = nullptr;
+    }
+    TTF_Quit();
     SDL_Quit();
 }
 

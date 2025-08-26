@@ -90,14 +90,14 @@ private:
 //    void handleMouseDown(const SDL_MouseButtonEvent& e);
 private:
     bool         isRunning{};
-    SDL_Window*  window{};
+    SDL_Window* window{};
     SDL_Renderer* renderer{};
     TTF_Font* mainFont{};
 
     Graph        graph;
     NodeManager  nodeManager;
     MNASolver    mnaSolver;
-    SimulationRunner simRunner{&graph, &mnaSolver, &nodeManager};
+    SimulationRunner simRunner;
 
     CommandParser parser;
 

@@ -12,50 +12,25 @@
 
 namespace View {
 
-    CircuitGrid::CircuitGrid(SDL_Window* win, Graph* g, NodeManager* n, CommandParser* p)
-            : window(win), graph(g), nm(n), parser(p) { // اینجا p اضافه و مقداردهی بشه
-        if (TTF_Init() == -1) {
-            std::cerr << "SDL_ttf could not initialize! SDL_Error: " << SDL_GetError() << "\n";
-            return;
-        }
-        loadFont("assets/roboto.ttf", 14);
-        if (!font) font = TTF_OpenFont("C:/Windows/Fonts/arial.ttf", 14);
+    CircuitGrid::CircuitGrid(SDL_Window* win, Graph* g, NodeManager* n, CommandParser* p, TTF_Font* main_font)
+            : window(win), graph(g), nm(n), parser(p), font(main_font) {
     }
-     // دیستراکتور
+
     CircuitGrid::~CircuitGrid() {
-        if (font) {
-            TTF_CloseFont(font);
-            font = nullptr;
-        }
-        TTF_Quit();
     }
 
-    // تابع بارگذاری فونت
-    void CircuitGrid::loadFont(const std::string& fontPath, int size) {
-        font = TTF_OpenFont(fontPath.c_str(), size);
-        if (font == nullptr) {
-            // --- تغییر در اینجا ---
-            std::cerr << "Failed to load font: " << fontPath
-                      << "! SDL_Error: " << SDL_GetError() << "\n";
-        }
-    }
-
-    // تابع رندر متن
     void CircuitGrid::renderText(SDL_Renderer* ren, const std::string& text, int x, int y, bool isEditing) {
         if (!font || text.empty()) {
             return;
         }
-        SDL_Color bgColor = {0, 0, 0, 0};
         SDL_Surface* textSurface = TTF_RenderText_Blended(font, text.c_str(), 0, textColor);
         if (textSurface == nullptr) {
-            // --- تغییر در اینجا ---
             std::cerr << "Unable to render text surface! SDL_Error: " << SDL_GetError() << "\n";
             return;
         }
 
         SDL_Texture* textTexture = SDL_CreateTextureFromSurface(ren, textSurface);
         if (textTexture == nullptr) {
-            // --- تغییر در اینجا ---
             std::cerr << "Unable to create texture from rendered text! SDL_Error: " << SDL_GetError() << "\n";
             SDL_DestroySurface(textSurface);
             return;
@@ -63,7 +38,6 @@ namespace View {
 
         SDL_FRect renderQuad = { (float)x, (float)y, (float)textSurface->w, (float)textSurface->h };
 
-        // اگر در حال ویرایش است، یک پس‌زمینه سفید رسم کنید
         if (isEditing) {
             SDL_FRect bgRect = { renderQuad.x - 2, renderQuad.y - 2, renderQuad.w + 4, renderQuad.h + 4 };
             SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);

@@ -18,27 +18,27 @@ namespace View {
         std::string n1, n2;
         int gx1, gy1;
         int gx2, gy2;
-
-
-
-        std::string name;     // نام قابل ویرایش (R1, Rload, ...)
-        std::string valueStr; // رشته‌ی مقدار (مثلا "10k", "1u", "default")
-        double      value = 0.0; // مقدار عددی (برای R/C/L/V/I)
+        std::string name;
+        std::string valueStr;
+        double      value = 0.0;
     };
 
     class CircuitGrid {
     public:
-        CircuitGrid(SDL_Window* win, Graph* g, NodeManager* nm, CommandParser* p);
+        CircuitGrid(SDL_Window* win, Graph* g, NodeManager* nm, CommandParser* p, TTF_Font* font);
         ~CircuitGrid();
 
         void handleEvent(const SDL_Event& e);
         void render(SDL_Renderer* ren);
         void commitToModel();
+
     private:
         SDL_Window* window;
         Graph* graph;
         NodeManager* nm;
         CommandParser* parser;
+        TTF_Font* font = nullptr;
+        SDL_Color textColor = {0, 0, 0, 255};
 
         int cellSize = 40;
         std::string currentKind = "Resistor";
@@ -47,32 +47,22 @@ namespace View {
         ToolKind currentTool = ToolKind::Wire;
 
         std::vector<PlacedElement> staged;
-
         std::optional<std::pair<int,int>> pendingFirstNode;
         std::unordered_map<ToolKind,int> kindCounters;
 
-        // --- انتخاب و ویرایش ---
-        std::optional<int> selectedIndex; // ایندکس قطعه‌ی انتخاب‌شده در staged
-        bool editing = false;             // آیا در حالت ورود متن هستیم؟
+        std::optional<int> selectedIndex;
+        bool editing = false;
         enum class EditField { None, Name, Value } editField = EditField::None;
-        std::string inputBuffer;          // بافر ورودی متنی
+        std::string inputBuffer;
 
         uint64_t lastClickTicks = 0;
         SDL_FPoint lastClickPos{0,0};
 
-        // --- اعضای مربوط به رندر متن ---  <--- اضافه شد
-        TTF_Font* font = nullptr;
-        SDL_Color textColor = {0, 0, 0, 255}; // رنگ متن: مشکی
-
-        // helpers
         void startEditName();
         void startEditValue();
         void commitEdit();
         void cancelEdit();
-
-        // --- توابع کمکی برای متن --- <--- اضافه شد
-        void loadFont(const std::string& fontPath, int size);
         void renderText(SDL_Renderer* ren, const std::string& text, int x, int y, bool isEditing = false);
     };
 
-} // namespace View
+}
