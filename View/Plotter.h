@@ -68,6 +68,7 @@ public:
     std::vector<std::string> getSeriesNames() const;
     bool setSeriesVisible(const std::string& name, bool on);
     bool removeSeries(const std::string& name);
+    bool setSeriesName(size_t index, const std::string& newName);
     const std::vector<Point>* getSeries(const std::string& name) const;
     const std::vector<Series>& debugSeries() const { return series; } // read-only
 

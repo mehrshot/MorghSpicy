@@ -43,7 +43,7 @@ namespace View {
         int cellSize = 40;
         std::string currentKind = "Resistor";
 
-        enum class ToolKind { Wire, Resistor, Capacitor, Inductor, VoltageSource, CurrentSource, Diode, Ground };
+        enum class ToolKind { Wire, Resistor, Capacitor, Inductor, VoltageSource, CurrentSource, Diode, Ground, VoltageProbe, CurrentProbe };
         ToolKind currentTool = ToolKind::Wire;
 
         std::vector<PlacedElement> staged;

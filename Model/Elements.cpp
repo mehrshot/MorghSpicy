@@ -22,6 +22,8 @@ void Resistor::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                         int extra_var_start_idx,
                         const Eigen::VectorXd& prev_solution,
                         double h) {
+    if (A.rows() == 0 || A.cols() == 0) return;
+
     if (value <= 0) {
         std::cerr << "Error: Resistor '" << name << "' has a non-positive value (" << value << "). Skipping stamp." << std::endl;
         return;
@@ -45,6 +47,8 @@ void Capacitor::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                          int extra_var_start_idx,
                          const Eigen::VectorXd& prev_solution,
                          double h) {
+    if (A.rows() == 0 || A.cols() == 0) return;
+
     if (value <= 0) {
         std::cerr << "Error: Capacitor '" << name << "' has a non-positive value (" << value << "). Skipping stamp." << std::endl;
         return;
@@ -81,6 +85,8 @@ void Inductor::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                         int extra_var_start_idx,
                         const Eigen::VectorXd& prev_solution,
                         double h) {
+    if (A.rows() == 0 || A.cols() == 0) return;
+
     if (value <= 0) {
         std::cerr << "Error: Inductor '" << name << "' has a non-positive value (" << value << "). Skipping stamp." << std::endl;
         return;
@@ -94,6 +100,11 @@ void Inductor::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
     int n2_idx = get_matrix_idx(node2, node_id_to_matrix_idx);
 
     int current_var_idx = extra_var_start_idx + extraVariableIndex;
+
+    if (current_var_idx < 0 || current_var_idx >= A.rows()) {
+        std::cerr << "Warning: skipping stamp for " << name << " due to invalid matrix index.\n";
+        return;
+    }
 
     if (n1_idx != -1) A(n1_idx, current_var_idx) += 1.0;
     if (n2_idx != -1) A(n2_idx, current_var_idx) -= 1.0;
@@ -113,10 +124,17 @@ void VoltageSource::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                              int extra_var_start_idx,
                              const Eigen::VectorXd& prev_solution,
                              double h) {
+    if (A.rows() == 0 || A.cols() == 0) return;
+
     int n1_idx = get_matrix_idx(node1, node_id_to_matrix_idx);
     int n2_idx = get_matrix_idx(node2, node_id_to_matrix_idx);
 
     int current_var_idx = extra_var_start_idx + extraVariableIndex;
+
+    if (current_var_idx < 0 || current_var_idx >= A.rows()) {
+        std::cerr << "Warning: skipping stamp for " << name << " due to invalid matrix index.\n";
+        return;
+    }
 
     if (n1_idx != -1) A(n1_idx, current_var_idx) += 1.0;
     if (n2_idx != -1) A(n2_idx, current_var_idx) -= 1.0;
@@ -133,6 +151,8 @@ void CurrentSource::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                              int extra_var_start_idx,
                              const Eigen::VectorXd& prev_solution,
                              double h) {
+    if (A.rows() == 0 || A.cols() == 0) return;
+
     int n1_idx = get_matrix_idx(node1, node_id_to_matrix_idx);
     int n2_idx = get_matrix_idx(node2, node_id_to_matrix_idx);
 
@@ -144,6 +164,7 @@ void Diode::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                      int extra_var_start_idx,
                      const Eigen::VectorXd& current_guess,
                      double h) {
+    if (A.rows() == 0 || A.cols() == 0) return;
 
     int n1_idx = get_matrix_idx(node1, node_id_to_matrix_idx);
     int n2_idx = get_matrix_idx(node2, node_id_to_matrix_idx);
@@ -187,6 +208,8 @@ void vccs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                     int extra_var_start_idx,
                     const Eigen::VectorXd& prev_solution,
                     double h) {
+    if (A.rows() == 0 || A.cols() == 0) return;
+
     int n1 = get_matrix_idx(node1, node_id_to_matrix_idx);
     int n2 = get_matrix_idx(node2, node_id_to_matrix_idx);
     int c1 = get_matrix_idx(ctrl_node1, node_id_to_matrix_idx);
@@ -204,6 +227,8 @@ void vcvs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                     int extra_var_start_idx,
                     const Eigen::VectorXd& prev_solution,
                     double h) {
+    if (A.rows() == 0 || A.cols() == 0) return;
+
     int n1 = get_matrix_idx(node1, node_id_to_matrix_idx);
     int n2 = get_matrix_idx(node2, node_id_to_matrix_idx);
     int c1 = get_matrix_idx(ctrl_node1, node_id_to_matrix_idx);
@@ -225,6 +250,8 @@ void cccs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                     int extra_var_start_idx,
                     const Eigen::VectorXd& prev_solution,
                     double h) {
+    if (A.rows() == 0 || A.cols() == 0) return;
+
     if (!controlling_elem) return;
     int ctrl_idx = extra_var_start_idx + controlling_elem->extraVariableIndex;
 
@@ -255,6 +282,8 @@ void ccvs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                     int extra_var_start_idx,
                     const Eigen::VectorXd& prev_solution,
                     double h) {
+    if (A.rows() == 0 || A.cols() == 0) return;
+
     if (!controlling_elem) return;
     int idx = extra_var_start_idx + extraVariableIndex;
     int ctrl_idx = extra_var_start_idx + controlling_elem->extraVariableIndex;
@@ -321,6 +350,8 @@ void PulseSource::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
                            int extra_var_start_idx,
                            const Eigen::VectorXd& prev_solution,
                            double h) {
+    if (A.rows() == 0 || A.cols() == 0) return;
+
     int extra_index = extra_var_start_idx + extraVariableIndex;
     int idx1 = get_matrix_idx(node1, node_id_to_matrix_idx);
     int idx2 = get_matrix_idx(node2, node_id_to_matrix_idx);

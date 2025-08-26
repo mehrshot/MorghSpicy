@@ -152,6 +152,8 @@ void CircuitGrid::cancelEdit() {
                 case SDLK_D: currentTool = ToolKind::Diode; std::cout << "Tool: Diode\n"; break;
                 case SDLK_W: currentTool = ToolKind::Wire; std::cout << "Tool: Wire\n"; break;
                 case SDLK_G: currentTool = ToolKind::Ground; std::cout << "Tool: Ground\n"; break;
+                case SDLK_P: currentTool = ToolKind::VoltageProbe; std::cout << "Tool: Voltage Probe\n"; break;
+                case SDLK_O: currentTool = ToolKind::CurrentProbe; std::cout << "Tool: Current Probe\n"; break;
                 default: break;
             }
         }
@@ -163,6 +165,50 @@ void CircuitGrid::cancelEdit() {
             bool isDoubleClick = (now - lastClickTicks < 400) && (std::abs(mx - lastClickPos.x) < 5 && std::abs(my - lastClickPos.y) < 5);
             lastClickTicks = now;
             lastClickPos = {mx, my};
+
+            if (currentTool == ToolKind::VoltageProbe || currentTool == ToolKind::CurrentProbe) {
+                int gx = mx / cellSize;
+                int gy = my / cellSize;
+                std::string command;
+
+                if (currentTool == ToolKind::VoltageProbe) {
+                    std::string nodeName = "N" + std::to_string(gx) + "_" + std::to_string(gy);
+                    command = "plot v " + nodeName;
+                } else { // CurrentProbe
+                    auto distToSeg = [](float x, float y, float x1, float y1, float x2, float y2){
+                        const float A = x - x1, B = y - y1;
+                        const float C = x2 - x1, D = y2 - y1;
+                        float dot = A*C + B*D;
+                        float len2 = C*C + D*D + 1e-9f;
+                        float t = std::max(0.f, std::min(1.f, dot / len2));
+                        float px = x1 + t*C, py = y1 + t*D;
+                        float dx = x - px, dy = y - py;
+                        return std::sqrt(dx*dx + dy*dy);
+                    };
+
+                    int best = -1; float bestd = 1e9f;
+                    for (int i = 0; i < (int)staged.size(); ++i) {
+                        auto& pe = staged[i];
+                        float x1 = pe.gx1 * cellSize + cellSize/2.0f;
+                        float y1 = pe.gy1 * cellSize + cellSize/2.0f;
+                        float x2 = pe.gx2 * cellSize + cellSize/2.0f;
+                        float y2 = pe.gy2 * cellSize + cellSize/2.0f;
+                        float d = distToSeg(mx, my, x1, y1, x2, y2);
+                        if (d < bestd) { bestd = d; best = i; }
+                    }
+
+                    if (best != -1 && bestd <= 12.0f) {
+                        command = "plot i " + staged[best].name;
+                    }
+                }
+
+                if (!command.empty()) {
+                    std::cout << "Probe executing: " << command << std::endl;
+                    commitToModel();
+                    parser->parseCommand(command);
+                }
+                return;
+            }
 
             auto distToSeg = [](float x, float y, float x1, float y1, float x2, float y2){
                 const float A = x - x1, B = y - y1;
@@ -235,6 +281,7 @@ void CircuitGrid::cancelEdit() {
                         case ToolKind::CurrentSource: pe.kind = "CurrentSource"; pe.valueStr = "1"; break;
                         case ToolKind::Diode: pe.kind = "Diode"; pe.valueStr = "D"; break;
                         case ToolKind::Wire: pe.kind = "Wire"; pe.valueStr = ""; break;
+
                         default: pendingFirstNode.reset(); return;
                     }
                     pe.value = CommandParser::parseValueWithPrefix(pe.valueStr).value_or(0.0);
@@ -421,8 +468,7 @@ void CircuitGrid::cancelEdit() {
 
     void CircuitGrid::commitToModel() {
         graph->clear();
-        nm = new NodeManager();
-        parser = new CommandParser(graph, nm, nullptr);
+        nm->rebuildLabelTable();
 
         for (auto& pe : staged) {
             std::string cmd;

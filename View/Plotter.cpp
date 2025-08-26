@@ -217,4 +217,12 @@ bool Plotter::removeSelected() {
     return true;
 }
 
+bool Plotter::setSeriesName(size_t index, const std::string& newName) {
+    if (index >= series.size()) {
+        return false;
+    }
+    series[index].name = newName;
+    return true;
+}
+
 

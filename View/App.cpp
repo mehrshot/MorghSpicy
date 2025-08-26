@@ -142,19 +142,9 @@ void App::loadAndPlotSignal(const std::string& path, double Fs, double tStop, in
 void App::handleEvents() {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
-        if (e.type == SDL_EVENT_QUIT) isRunning = false;
-
-        // --- اضافه شد: سوییچ بین Grid و Plotter ---
-        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_F2 && (e.key.down || e.key.repeat)) {
-            currentPage = (currentPage == Page::Grid) ? Page::Plotter : Page::Grid;
+        if (e.type == SDL_EVENT_QUIT) {
+            isRunning = false;
         }
-        if (currentPage == Page::Grid && gridPage) {
-            gridPage->handleEvent(e);
-            continue;
-        }
-
-        // Give all input to the plotter (zoom/pan/auto-zoom/cursors/selection)
-        plotter.handleEvent(e);
 
         if (e.type == SDL_EVENT_WINDOW_RESIZED) {
             int w = 0, h = 0;
@@ -163,86 +153,125 @@ void App::handleEvents() {
         }
 
         if (e.type == SDL_EVENT_KEY_DOWN) {
-            switch (e.key.key) {
-                case SDLK_ESCAPE: isRunning = false; break;
+            if (e.key.key == SDLK_ESCAPE) {
+                isRunning = false;
+            }
+            if (e.key.key == SDLK_F2) {
+                if (currentPage == Page::Grid) {
+                    currentPage = Page::Plotter;
+                    gridPage->commitToModel();
+                    SDL_StartTextInput(window);
+                } else {
+                    currentPage = Page::Grid;
+                    SDL_StopTextInput(window);
+                }
+            }
+        }
 
-                // -------- Load a text signal file (1 value per line) ----------
-                case SDLK_L: {
-                    loadAndPlotSignal(sigui.lastPath, sigui.Fs, sigui.tStop, sigui.chunkSz, sigui.byChunks);
-                } break;
+        if (currentPage == Page::Grid) {
+            if (gridPage) {
+                gridPage->handleEvent(e);
+            }
+        }
+        else {
+            plotter.handleEvent(e);
 
-                // Toggle chunked demo (load only first chunk)
-                case SDLK_S: {
-                    sigui.byChunks = !sigui.byChunks;
-                    std::cout << "[Signal] byChunks = " << (sigui.byChunks ? "true" : "false") << "\n";
-                } break;
+            if (e.type == SDL_EVENT_TEXT_INPUT) {
+                commandInputBuffer += e.text.text;
+            }
+            else if (e.type == SDL_EVENT_KEY_DOWN) {
+                if (e.key.key == SDLK_RETURN) {
+                    if (!commandInputBuffer.empty()) {
+                        std::istringstream iss(commandInputBuffer);
+                        std::string cmd;
+                        iss >> cmd;
+                        if (cmd == "relabel") {
+                            size_t idx;
+                            std::string newName;
+                            if (iss >> idx && iss >> newName) {
+                                if (plotter.setSeriesName(idx - 1, newName)) {
+                                    std::cout << "Relabeled series " << idx << " to " << newName << "\n";
+                                } else {
+                                    std::cout << "Error: Invalid series index '" << idx << "'\n";
+                                }
+                            } else {
+                                std::cout << "Usage: relabel <index> <NewName>\n";
+                            }
+                        } else {
+                            parser.parseCommand(commandInputBuffer);
+                        }
+                        commandInputBuffer.clear();
+                    }
+                } else if (e.key.key == SDLK_BACKSPACE && !commandInputBuffer.empty()) {
+                    commandInputBuffer.pop_back();
+                }
 
-                // Re-run transient quickly (R)
-                case SDLK_R: {
-                    double stopTime        = 0.05;
-                    double initialTimestep = 1e-5;
-                    double maxTimestep     = 1e-3;
-                    std::vector<OutputVariable> vars = {
-                            {OutputVariable::VOLTAGE, "N2"}    // adjust to your node names
-                    };
-                    PlotData pd = simRunner.runTransient(initialTimestep, stopTime, maxTimestep, vars);
-                    showPlot(pd);
-                } break;
-
-                // ---- Scope math: M=sum last two, N=diff last two, K=scale last ----
-                case SDLK_M: {
-                    const auto& ss = plotter.debugSeries();
-                    if (ss.size() >= 2) {
-                        auto C = combineSameGrid(ss[ss.size()-2].points, ss.back().points, 1.0, '+');
-                        plotter.addSeries(ss[ss.size()-2].name + "_plus_" + ss.back().name, C);
-                        std::cout << "[Scope] sum added\n";
+                switch (e.key.key) {
+                    case SDLK_L:
+                        loadAndPlotSignal(sigui.lastPath, sigui.Fs, sigui.tStop, sigui.chunkSz, sigui.byChunks);
+                        break;
+                    case SDLK_S:
+                        sigui.byChunks = !sigui.byChunks;
+                        std::cout << "[Signal] byChunks = " << (sigui.byChunks ? "true" : "false") << "\n";
+                        break;
+                    case SDLK_R: {
+                        gridPage->commitToModel();
+                        PlotData pd = simRunner.runTransient(1e-5, 0.05, 1e-3, {{OutputVariable::VOLTAGE, "N2"}});
+                        showPlot(pd);
+                        break;
                     }
-                } break;
-                case SDLK_N: {
-                    const auto& ss = plotter.debugSeries();
-                    if (ss.size() >= 2) {
-                        auto C = combineSameGrid(ss[ss.size()-2].points, ss.back().points, 1.0, '-');
-                        plotter.addSeries(ss[ss.size()-2].name + "_minus_" + ss.back().name, C);
-                        std::cout << "[Scope] diff added\n";
+                    case SDLK_M: {
+                        const auto& ss = plotter.debugSeries();
+                        if (ss.size() >= 2) {
+                            auto C = combineSameGrid(ss[ss.size()-2].points, ss.back().points, 1.0, '+');
+                            plotter.addSeries(ss[ss.size()-2].name + "_plus_" + ss.back().name, C);
+                        }
+                        break;
                     }
-                } break;
-                case SDLK_K: {
-                    const auto& ss = plotter.debugSeries();
-                    if (!ss.empty()) {
-                        const double K = 2.0; // simple default
-                        auto S = scaleSeries(ss.back().points, K);
-                        plotter.addSeries(ss.back().name + "_x2", S);
-                        std::cout << "[Scope] scaled x2\n";
+                    case SDLK_N: {
+                        const auto& ss = plotter.debugSeries();
+                        if (ss.size() >= 2) {
+                            auto C = combineSameGrid(ss[ss.size()-2].points, ss.back().points, 1.0, '-');
+                            plotter.addSeries(ss[ss.size()-2].name + "_minus_" + ss.back().name, C);
+                        }
+                        break;
                     }
-                } break;
-
-                // ---- Series selection 1–9, visibility (V), remove (Del), legend (G) ----
-                case SDLK_1: case SDLK_2: case SDLK_3:
-                case SDLK_4: case SDLK_5: case SDLK_6:
-                case SDLK_7: case SDLK_8: case SDLK_9: {
-                    int digit = 0;
-                    switch (e.key.key) {
-                        case SDLK_1: digit = 1; break; case SDLK_2: digit = 2; break; case SDLK_3: digit = 3; break;
-                        case SDLK_4: digit = 4; break; case SDLK_5: digit = 5; break; case SDLK_6: digit = 6; break;
-                        case SDLK_7: digit = 7; break; case SDLK_8: digit = 8; break; case SDLK_9: digit = 9; break;
+                    case SDLK_K: {
+                        const auto& ss = plotter.debugSeries();
+                        if (!ss.empty()) {
+                            auto S = scaleSeries(ss.back().points, 2.0);
+                            plotter.addSeries(ss.back().name + "_x2", S);
+                        }
+                        break;
                     }
-                    size_t idx = (digit > 0) ? (size_t)(digit - 1) : 0;
-                    if (plotter.selectByIndex(idx)) {
-                        std::cout << "[Legend] selected #" << digit << " -> " << plotter.getSelectedName() << "\n";
+                    case SDLK_1: case SDLK_2: case SDLK_3:
+                    case SDLK_4: case SDLK_5: case SDLK_6:
+                    case SDLK_7: case SDLK_8: case SDLK_9: {
+                        int digit = e.key.key - SDLK_0;
+                        if (plotter.selectByIndex(digit - 1)) {
+                            std::cout << "[Legend] selected #" << digit << " -> " << plotter.getSelectedName() << "\n";
+                        }
+                        break;
                     }
-                } break;
-                case SDLK_V: {
-                    if (plotter.toggleSelectedVisibility())
-                        std::cout << "[Legend] toggled visibility\n";
-                } break;
-                case SDLK_DELETE: {
-                    if (plotter.removeSelected())
-                        std::cout << "[Legend] removed selected series\n";
-                } break;
-                case SDLK_G: {
-                    plotter.setLegendVisible(!plotter.isLegendVisible());
-                } break;
-                default: break;
+                    case SDLK_V:
+                        plotter.toggleSelectedVisibility();
+                        break;
+                    case SDLK_DELETE:
+                        plotter.removeSelected();
+                        break;
+                    case SDLK_G:
+                        plotter.setLegendVisible(!plotter.isLegendVisible());
+                        break;
+                    case SDLK_B: {
+                        auto selectedIdx = plotter.getSelectedIndex();
+                        if (selectedIdx.has_value()) {
+                            plotter.cycleSeriesColor(*selectedIdx);
+                        }
+                        break;
+                    }
+                    default:
+                        break;
+                }
             }
         }
     }
@@ -269,19 +298,45 @@ void App::render() {
         if (auto x2 = plotter.getCursor2X()) {
             double dt = *x2 - *x1;
             std::cout << "[Cursors] Δt = " << dt << " s";
+
             const auto& ss = plotter.debugSeries();
-            if (!ss.empty() && !ss.back().points.empty()) {
-                const auto& pts = ss.back().points;
+            auto selectedIdx = plotter.getSelectedIndex();
+            const auto& seriesToMeasure = (selectedIdx && *selectedIdx < ss.size()) ? ss[*selectedIdx] : ss.back();
+
+            if (!ss.empty() && !seriesToMeasure.points.empty()) {
+                const auto& pts = seriesToMeasure.points;
                 auto at = [&](double x){
                     auto it = std::lower_bound(pts.begin(), pts.end(), x,
                                                [](const Point& p, double xv){ return p.x < xv; });
-                    if (it == pts.end()) --it;
+                    if (it == pts.end() || it == pts.begin()) return it == pts.begin() ? pts.front().y : pts.back().y;
                     return it->y;
                 };
                 double dy = at(*x2) - at(*x1);
-                std::cout << ", Δy(" << ss.back().name << ") = " << dy;
+                std::cout << ", Δy(" << seriesToMeasure.name << ") = " << dy;
+
+                if (std::abs(dt) > 1e-12) {
+                    double slope = dy / dt;
+                    std::cout << ", Slope = " << slope;
+                }
             }
             std::cout << "\n";
+        }
+    }
+
+    if (currentPage == Page::Grid && gridPage) {
+        gridPage->render(renderer);
+    } else {
+        plotter.render(renderer);
+        // نمایش بافر دستور در پایین صفحه Plotter
+        if (mainFont && !commandInputBuffer.empty()) {
+            SDL_Surface* surface = TTF_RenderText_Blended(mainFont, commandInputBuffer.c_str(), commandInputBuffer.size(), {0, 0, 0, 255});
+            if (surface) {
+                SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+                SDL_FRect dstRect = { 10, 570, (float)surface->w, (float)surface->h };
+                SDL_RenderTexture(renderer, texture, nullptr, &dstRect);
+                SDL_DestroyTexture(texture);
+                SDL_DestroySurface(surface);
+            }
         }
     }
 
@@ -315,27 +370,14 @@ void App::renderSchematic() {
 int App::run() {
     if (!init()) return -1;
 
-    // Load a starting netlist via your command parser (adjust path)
-    {
-        CommandParser parser(&graph, &nodeManager, &simRunner);
-        parser.onPlotData = [this](const PlotData& pd){ this->showPlot(pd); };
+    parser.onPlotData = [this](const PlotData& pd){ this->showPlot(pd); };
+    parser.onScopeLoad = [this](const std::string& p, double Fs, double t, int c){
+        this->loadAndPlotSignal(p, Fs, t, c);
+    };
+    parser.onScopeClear = [this](){ this->plotter.clear(); };
 
-        parser.onScopeLoad = [this](const std::string& p, double Fs, double t, int c){
-            this->loadAndPlotSignal(p, Fs, t, c);
-        };
-        parser.onScopeClear = [this](){ this->plotter.clear(); };
-//        parser.parseCommand("load schematics/rc_step.txt");
-
-        // Run once so there's a plot on screen
-        double stopTime        = 0.05;
-        double initialTimestep = 1e-5;
-        double maxTimestep     = 1e-3;
-        std::vector<OutputVariable> vars = {
-                {OutputVariable::VOLTAGE, "N2"}
-        };
-        PlotData pd = simRunner.runTransient(initialTimestep, stopTime, maxTimestep, vars);
-        showPlot(pd);
-    }
+    PlotData pd = simRunner.runTransient(1e-5, 0.05, 1e-3, {{OutputVariable::VOLTAGE, "N2"}});
+    showPlot(pd);
 
     while (isRunning) {
         handleEvents();

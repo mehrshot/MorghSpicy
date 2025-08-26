@@ -20,6 +20,10 @@ SimulationRunner::SimulationRunner(Graph* g, MNASolver* solver, NodeManager* n)
 PlotData SimulationRunner::runTransient(double tstep_initial, double tstop, double tmaxstep, const std::vector<OutputVariable>& requested_vars) {
     PlotData plotData;
     mnaSolver->initializeMatrix(*graph);
+    if (mnaSolver->getTotalUnknowns() == 0) {
+        std::cerr << "[ABORT] No solvable MNA system (likely missing/isolated GND or no connections).\n";
+        return plotData;
+    }
 
     graph->canonicalizeNodes(*nm);
 
