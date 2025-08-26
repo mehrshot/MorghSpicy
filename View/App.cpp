@@ -49,7 +49,10 @@ static std::vector<Point> toSeries(const std::vector<double>& xs,
 
 // ---------------------------------------------------------------
 
-App::App() : simRunner(&graph, &mnaSolver, &nodeManager), parser(&graph, &nodeManager, &simRunner) {}
+App::App() : simRunner(&graph, &mnaSolver, &nodeManager),
+             parser(&graph, &nodeManager, &simRunner),
+             plotter()
+{}
 
 bool App::init() {
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -89,6 +92,10 @@ bool App::init() {
         std::cerr << "Failed to load font! Both roboto.ttf and arial.ttf were not found." << std::endl;
     }
 
+    int w, h;
+    SDL_GetWindowSizeInPixels(window, &w, &h);
+    plotter = Plotter(SDL_FRect{60.f, 40.f, float(w - 120), float(h - 100)}, mainFont);
+
     simSettingsButton.setFont(mainFont);
 
     gridPage = std::make_unique<View::CircuitGrid>(window, &graph, &nodeManager, &parser, mainFont);
@@ -115,7 +122,7 @@ void App::cleanup() {
 }
 
 void App::showPlot(const PlotData& pd) {
-    plotter.clear();
+    //plotter.clear();
     std::vector<std::vector<Point>> added;
     for (size_t k = 0; k < pd.data_series.size(); ++k) {
         auto s = toSeries(pd.time_axis, pd.data_series[k]);
@@ -172,7 +179,7 @@ void App::handleEvents() {
         if (e.type == SDL_EVENT_WINDOW_RESIZED) {
             int w = 0, h = 0;
             SDL_GetWindowSizeInPixels(window, &w, &h);
-            plotter = Plotter(SDL_FRect{60.f, 40.f, float(w - 120), float(h - 100)});
+            plotter = Plotter(SDL_FRect{60.f, 40.f, float(w - 120), float(h - 100)}, mainFont);
         }
 
         if (e.type == SDL_EVENT_KEY_DOWN) {
@@ -196,7 +203,7 @@ void App::handleEvents() {
                 gridPage->handleEvent(e);
             }
         }
-        else {
+        else { // currentPage == Page::Plotter
             plotter.handleEvent(e);
 
             if (e.type == SDL_EVENT_TEXT_INPUT) {
@@ -205,20 +212,28 @@ void App::handleEvents() {
             else if (e.type == SDL_EVENT_KEY_DOWN) {
                 if (e.key.key == SDLK_RETURN) {
                     if (!commandInputBuffer.empty()) {
+                        std::cout << "Executing: " << commandInputBuffer << std::endl;
                         std::istringstream iss(commandInputBuffer);
                         std::string cmd;
                         iss >> cmd;
+
                         if (cmd == "relabel") {
                             size_t idx;
-                            std::string newName;
-                            if (iss >> idx && iss >> newName) {
-                                if (plotter.setSeriesName(idx - 1, newName)) {
-                                    std::cout << "Relabeled series " << idx << " to " << newName << "\n";
+                            if (iss >> idx) {
+                                std::string newName;
+                                std::getline(iss >> std::ws, newName);
+
+                                if (!newName.empty()) {
+                                    if (plotter.setSeriesName(idx - 1, newName)) {
+                                        std::cout << "Relabeled series " << idx << " to '" << newName << "'\n";
+                                    } else {
+                                        std::cout << "Error: Invalid series index '" << idx << "'\n";
+                                    }
                                 } else {
-                                    std::cout << "Error: Invalid series index '" << idx << "'\n";
+                                    std::cout << "Usage: relabel <index> <New Name>\n";
                                 }
                             } else {
-                                std::cout << "Usage: relabel <index> <NewName>\n";
+                                std::cout << "Usage: relabel <index> <New Name>\n";
                             }
                         } else {
                             parser.parseCommand(commandInputBuffer);

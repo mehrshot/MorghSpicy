@@ -451,7 +451,11 @@ void CircuitGrid::cancelEdit() {
             } else if (pe.kind == "Ground") {
                 cmd = "add GND " + pe.n1;
             } else {
-                cmd = "add " + pe.name + " " + pe.n1 + " " + pe.n2 + " " + pe.valueStr;
+                std::string n1 = pe.n1;
+                std::string n2 = pe.n2;
+                if (pe.kind != "Wire" && pe.kind != "Ground" && n1 == n2)
+                    n2 = std::to_string(nm->newNodeId());
+                cmd = "add " + pe.name + " " + n1 + " " + n2 + " " + pe.valueStr;
             }
             parser->parseCommand(cmd);
         }

@@ -101,7 +101,7 @@ private:
 
     CommandParser parser;
 
-    Plotter      plotter{ SDL_FRect{60, 40, 700, 500} };
+    Plotter      plotter;
     std::string commandInputBuffer;
     SigUI        sigui{};
     Button simSettingsButton;

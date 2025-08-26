@@ -37,25 +37,49 @@ bool isNumber(const std::string& s) {
 std::optional<double> CommandParser::parseValueWithPrefix(const std::string& str) {
     if (str.empty()) return std::nullopt;
     try {
-        double factor = 1.0;
         std::string numPart = str;
-        char last = tolower(str.back());
+        double factor = 1.0;
 
-        switch (last) {
-            case 'k': factor = 1e3; numPart = str.substr(0, str.size()-1); break;
-            case 'm': factor = 1e-3; numPart = str.substr(0, str.size()-1); break;
-            case 'u': factor = 1e-6; numPart = str.substr(0, str.size()-1); break;
-            case 'n': factor = 1e-9; numPart = str.substr(0, str.size()-1); break;
-            case 'p': factor = 1e-12; numPart = str.substr(0, str.size()-1); break;
-            case 'g': factor = 1e9; numPart = str.substr(0, str.size()-1); break;
-            case 't': factor = 1e12; numPart = str.substr(0, str.size()-1); break;
-            default:
-                if (isNumber(str)) return std::stod(str);
-                break;
+        std::string lower_str = str;
+        std::transform(lower_str.begin(), lower_str.end(), lower_str.begin(),
+                       [](unsigned char c){ return std::tolower(c); });
+
+        // ابتدا پیشوندهای چندحرفی را بررسی کن
+        if (lower_str.length() > 3 && lower_str.substr(lower_str.length() - 3) == "meg") {
+            factor = 1e6;
+            numPart = str.substr(0, str.length() - 3);
+        }
+        else {
+            // سپس پیشوندهای تک‌حرفی را بررسی کن
+            char last = lower_str.back();
+            if (!std::isdigit(last)) {
+                numPart = str.substr(0, str.length() - 1);
+                switch (last) {
+                    case 't': factor = 1e12; break;
+                    case 'g': factor = 1e9;  break;
+                    case 'k': factor = 1e3;  break;
+                    case 'm': factor = 1e-3; break;
+                    case 'u': factor = 1e-6; break;
+                    case 'n': factor = 1e-9; break;
+                    case 'p': factor = 1e-12; break;
+                    default:
+                        // اگر پیشوند ناشناس بود، آن را بخشی از عدد در نظر بگیر
+                        numPart = str;
+                        factor = 1.0;
+                        break;
+                }
+            }
         }
 
-        if (numPart.empty() || !isNumber(numPart)) return std::nullopt;
+        if (numPart.empty() || !isNumber(numPart)) {
+            if (isNumber(str)) { // حالت خاصی که عدد بدون پیشوند است
+                return std::stod(str);
+            }
+            return std::nullopt;
+        }
+
         return std::stod(numPart) * factor;
+
     } catch (...) {
         return std::nullopt;
     }

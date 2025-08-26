@@ -6,13 +6,91 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <iostream>
+#include <SDL3_ttf/SDL_ttf.h>
 
 static SDL_Color palette[] = {
         {  46, 204, 113, 255}, {  52, 152, 219, 255}, {231,  76,  60, 255},
         { 155,  89, 182, 255}, { 241, 196,  15, 255}, { 26, 188, 156, 255},
 };
 
-Plotter::Plotter(SDL_FRect plotArea) : area(plotArea) { applyAutoZoom(); }
+Plotter::Plotter(SDL_FRect plotArea, TTF_Font* f) : area(plotArea), font(f) {
+    applyAutoZoom();
+}
+
+void Plotter::renderText(SDL_Renderer* ren, const std::string& text, int x, int y) const {
+    if (!font || text.empty()) {
+        return;
+    }
+    SDL_Color textColor = {0, 0, 0, 255};
+    SDL_Surface* textSurface = TTF_RenderText_Blended(font, text.c_str(), 0, textColor);
+    if (textSurface == nullptr) {
+        return;
+    }
+
+    SDL_Texture* textTexture = SDL_CreateTextureFromSurface(ren, textSurface);
+    if (textTexture == nullptr) {
+        SDL_DestroySurface(textSurface);
+        return;
+    }
+
+    SDL_FRect renderQuad = { (float)x, (float)y, (float)textSurface->w, (float)textSurface->h };
+    SDL_RenderTexture(ren, textTexture, nullptr, &renderQuad);
+
+    SDL_DestroyTexture(textTexture);
+    SDL_DestroySurface(textSurface);
+}
+
+Point Plotter::screenToWorld(float sx, float sy) const {
+    double wx = (sx - area.x) / scaleX - offsetX;
+    double wy = (area.y + area.h - sy) / scaleY - offsetY;
+    return {wx, wy};
+}
+
+
+void Plotter::drawAxisLabels(SDL_Renderer* r) const {
+    if (!font) return;
+
+    const int nx = 10, ny = 8;
+    char buffer[32];
+
+    for (int j = 0; j <= ny; ++j) {
+        float y_screen = area.y + j * (area.h / ny);
+        Point p_world = screenToWorld(area.x, y_screen);
+        snprintf(buffer, sizeof(buffer), "%.2g", p_world.y);
+        int text_w, text_h;
+        TTF_GetStringSize(font, buffer, 0, &text_w, &text_h);
+        renderText(r, buffer, area.x - text_w - 5, y_screen - text_h / 2);
+    }
+
+    for (int i = 0; i <= nx; ++i) {
+        float x_screen = area.x + i * (area.w / nx);
+        Point p_world = screenToWorld(x_screen, area.y);
+        snprintf(buffer, sizeof(buffer), "%.2g", p_world.x);
+        int text_w, text_h;
+        TTF_GetStringSize(font, buffer, 0, &text_w, &text_h);
+        renderText(r, buffer, x_screen - text_w / 2, area.y + area.h + 5);
+    }
+}
+
+void Plotter::render(SDL_Renderer* r) {
+    drawGrid(r);
+    drawAxisLabels(r);
+    for (size_t i = 0; i < series.size(); ++i) {
+        const auto& s = series[i];
+        if (!s.visible || s.points.size() < 2) continue;
+
+        Uint8 alpha = (!selectedIndex || *selectedIndex == i) ? 255 : 120;
+        SDL_SetRenderDrawColor(r, s.color.r, s.color.g, s.color.b, alpha);
+
+        std::vector<SDL_FPoint> pts; pts.reserve(s.points.size());
+        for (const auto& p : s.points) pts.push_back(worldToScreen(p.x, p.y));
+        SDL_RenderLines(r, pts.data(), (int)pts.size());
+    }
+    drawCursors(r);
+    drawLegend(r);
+}
+
 
 void Plotter::clear() {
     series.clear();
@@ -102,15 +180,19 @@ void Plotter::drawLegend(SDL_Renderer* r) const {
     const float x = area.x + area.w - 150.f, swatch = 10.f;
     float y = area.y + 10.f;
     SDL_FRect box{ x-8, y-6, 140.f, static_cast<float>(16*series.size()+12) };
-    SDL_SetRenderDrawColor(r, 255,255,255,230); SDL_RenderFillRect(r, &box);
-    SDL_SetRenderDrawColor(r, 0,0,0,255); SDL_RenderRect(r, &box);
+    SDL_SetRenderDrawColor(r, 255,255,255,230);
+    SDL_RenderFillRect(r, &box);
+    SDL_SetRenderDrawColor(r, 0,0,0,255);
+    SDL_RenderRect(r, &box);
 
     for (size_t i = 0; i < series.size(); ++i) {
         const auto& s = series[i];
+
         SDL_SetRenderDrawColor(r, s.color.r, s.color.g, s.color.b, 255);
         SDL_RenderLine(r, x, y+8, x+swatch, y+8);
 
-        // highlight selection with a thin box around the swatch
+        renderText(r, s.name, x + swatch + 5, y);
+
         if (selectedIndex && *selectedIndex == i) {
             SDL_SetRenderDrawColor(r, 0,0,0,255);
             SDL_FRect hi{ x-2.f, y+2.f, swatch+4.f, 12.f };
@@ -118,7 +200,6 @@ void Plotter::drawLegend(SDL_Renderer* r) const {
         }
         y += 16.f;
     }
-
 }
 
 void Plotter::drawCursors(SDL_Renderer* r) const {
@@ -127,23 +208,6 @@ void Plotter::drawCursors(SDL_Renderer* r) const {
     auto drawX = [&](double xw){ SDL_FPoint p1 = worldToScreen(xw, minY); SDL_RenderLine(r, p1.x, area.y, p1.x, area.y + area.h); };
     if (cursor1X) drawX(*cursor1X);
     if (doubleCursor && cursor2X) drawX(*cursor2X);
-}
-
-void Plotter::render(SDL_Renderer* r) {
-    drawGrid(r);
-    for (size_t i = 0; i < series.size(); ++i) {
-        const auto& s = series[i];
-        if (!s.visible || s.points.size() < 2) continue;
-
-        Uint8 alpha = (!selectedIndex || *selectedIndex == i) ? 255 : 120;
-        SDL_SetRenderDrawColor(r, s.color.r, s.color.g, s.color.b, alpha);
-
-        std::vector<SDL_FPoint> pts; pts.reserve(s.points.size());
-        for (const auto& p : s.points) pts.push_back(worldToScreen(p.x, p.y));
-        SDL_RenderLines(r, pts.data(), (int)pts.size());
-    }
-    drawCursors(r);
-    drawLegend(r);
 }
 
 
