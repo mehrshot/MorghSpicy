@@ -71,8 +71,16 @@ bool App::init() {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderVSync(renderer, 1);
 
-    // font is copied next to the exe by cmake, but try the working dir too
+    // font and icon are copied next to the exe by cmake, but try the working dir too
     std::string base = SDL_GetBasePath() ? SDL_GetBasePath() : "";
+    for (const std::string& path : { base + "assets/icon.bmp", std::string("assets/icon.bmp") }) {
+        if (SDL_Surface* icon = SDL_LoadBMP(path.c_str())) {
+            SDL_SetWindowIcon(window, icon);
+            SDL_DestroySurface(icon);
+            break;
+        }
+    }
+
     for (const std::string& path : { base + "assets/roboto.ttf", std::string("assets/roboto.ttf"),
                                      std::string("C:/Windows/Fonts/arial.ttf") }) {
         mainFont = TTF_OpenFont(path.c_str(), 15);
