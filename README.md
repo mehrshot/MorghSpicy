@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.jpg" alt="MorghSpicy logo" width="200">
+  <img src="assets/logo.png" alt="MorghSpicy logo" width="260">
 </p>
 
 <h1 align="center">MorghSpicy</h1>

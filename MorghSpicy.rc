@@ -1,0 +1,2 @@
+// windows exe icon (shown in explorer and the taskbar)
+IDI_ICON1 ICON "assets/icon.ico"

@@ -40,6 +40,13 @@ add_executable(MorghSpicy
         View/Plotter.cpp
 )
 
+if (WIN32)
+    enable_language(RC)
+    target_sources(MorghSpicy PRIVATE MorghSpicy.rc)
+    # rebuild the resource when the icon changes
+    set_source_files_properties(MorghSpicy.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_SOURCE_DIR}/assets/icon.ico)
+endif()
+
 target_include_directories(MorghSpicy PRIVATE ${CMAKE_SOURCE_DIR})
 
 target_link_libraries(MorghSpicy PRIVATE
