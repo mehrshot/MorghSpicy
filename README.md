@@ -297,6 +297,10 @@ There are still things I would like to improve:
 
 ## Team
 
-- Mehrshad ([@mehrshot](https://github.com/mehrshot))
-- Ali
-- ER
+- Mehrshad Arshad ([@mehrshot](https://github.com/mehrshot))
+- Ernika Daftari ([@erthehogwartsdropout](https://github.com/erthehogwartsdropout))
+- Ali Sanati ([@AliiSanatii](https://github.com/AliiSanatii))
+
+## License
+
+This project is released under the [MIT License](LICENSE).
