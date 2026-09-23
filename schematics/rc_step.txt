@@ -1,0 +1,4 @@
+* RC charging, tau = 10ms
+V V1 N1 0 5
+R R1 N1 N2 1k
+C C1 N2 0 10u

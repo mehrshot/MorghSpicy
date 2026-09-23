@@ -1,0 +1,9 @@
+* VCVS amplifier (gain 10) followed by a CCCS
+V V1 in 0 1
+R R1 in 0 1k
+E E1 a 0 in 0 10
+R R2 a 0 2k
+V Vsense a b 0
+F F1 0 c Vsense 2
+R R3 b 0 1k
+R R4 c 0 500

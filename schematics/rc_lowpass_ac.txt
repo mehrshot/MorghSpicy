@@ -1,0 +1,4 @@
+* first order low pass, corner at w = 1/RC = 1000 rad/s
+V Vs in 0 SIN(0 1 159.15)
+R R1 in out 1k
+C C1 out 0 1u

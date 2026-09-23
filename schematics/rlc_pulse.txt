@@ -1,0 +1,5 @@
+* series RLC driven by a pulse
+V Vin in 0 PULSE(0 5 0 1u 1u 5m 10m)
+R R1 in a 10
+L L1 a out 10m
+C C1 out 0 10u

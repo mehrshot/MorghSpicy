@@ -1,0 +1,5 @@
+* half wave rectifier with smoothing cap
+V Vs in 0 SIN(0 10 50 0)
+D D1 in out D
+R RL out 0 1k
+C C1 out 0 100u
