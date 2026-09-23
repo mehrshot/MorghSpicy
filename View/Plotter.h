@@ -14,12 +14,13 @@ struct Series {
     bool visible{true};
 };
 
-enum class PlotMode { Time, Frequency, Phase };
-
 class Plotter {
 public:
     Plotter() = default;
     explicit Plotter(SDL_FRect plotArea, TTF_Font* font);
+
+    void setArea(SDL_FRect plotArea);
+    void setFont(TTF_Font* f) { font = f; }
 
     void clear();
     void addSeries(const std::string& name,
@@ -28,7 +29,11 @@ public:
 
     void setAutoZoom(bool on);
     void applyAutoZoom();
-    void setMode(PlotMode m) { mode = m; }
+
+    // x axis settings (log scale is used for dec/oct AC sweeps)
+    void setXAxis(const std::string& label, bool logScale);
+    const std::string& xLabel() const { return xAxisLabel; }
+    bool isLogX() const { return logX; }
 
     void handleEvent(const SDL_Event& e);
     void render(SDL_Renderer* r);
@@ -42,6 +47,8 @@ public:
     void enableDoubleCursor(bool on);
     std::optional<double> getCursor1X() const { return cursor1X; }
     std::optional<double> getCursor2X() const { return cursor2X; }
+    // value of a series at x (nearest sample)
+    std::optional<double> valueAt(size_t idx, double x) const;
 
     void setLegendVisible(bool on) { legendVisible = on; }
     bool isLegendVisible() const { return legendVisible; }
@@ -53,25 +60,24 @@ public:
     bool toggleSelectedVisibility();
     bool removeSelected();
 
-    std::vector<std::string> getSeriesNames() const;
-    bool setSeriesVisible(const std::string& name, bool on);
-    bool removeSeries(const std::string& name);
     bool setSeriesName(size_t index, const std::string& newName);
-    const std::vector<Point>* getSeries(const std::string& name) const;
-    const std::vector<Series>& debugSeries() const { return series; }
+    const std::vector<Series>& allSeries() const { return series; }
 
-    void toggleSeriesVisible(int i);
-    void cycleSeriesColor(int i);
+    void cycleSeriesColor(size_t i);
+
 private:
-    SDL_FRect area;
+    SDL_FRect area{};
     std::vector<Series> series;
     TTF_Font* font = nullptr;
 
     double minX{}, maxX{}, minY{}, maxY{};
+    int nxDiv = 10, nyDiv = 8;     // grid divisions
     double scaleX{1.0}, scaleY{1.0};
     double offsetX{0.0}, offsetY{0.0};
     bool   autoZoom{true};
-    PlotMode mode{PlotMode::Time};
+
+    std::string xAxisLabel = "t (s)";
+    bool logX = false;
 
     bool legendVisible{true};
     std::optional<size_t> selectedIndex;
@@ -85,7 +91,13 @@ private:
     void drawLegend(SDL_Renderer* r) const;
     void drawCursors(SDL_Renderer* r) const;
     void drawAxisLabels(SDL_Renderer* r) const;
-    void renderText(SDL_Renderer* ren, const std::string& text, int x, int y) const;
+    void renderText(SDL_Renderer* ren, const std::string& text, float x, float y) const;
+    void printCursorInfo() const;
+
+    // x goes through log10 when the axis is logarithmic
+    double toAxisX(double x) const;
+    double fromAxisX(double ax) const;
+
     SDL_FPoint worldToScreen(double x, double y) const;
     Point screenToWorld(float sx, float sy) const;
     void recomputeBounds();
