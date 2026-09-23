@@ -40,6 +40,7 @@ public:
     std::string getNodeNameById(int id) const { return nameOf(id); }
 
     static bool isGroundToken(const std::string& s);
+    int newNodeId();
 
 
 private:
@@ -55,6 +56,5 @@ private:
     std::unordered_map<std::string,int> labelToId;
     std::unordered_map<int,std::string> idToLabel;
 
-    int newNodeId();       // create a fresh positive node id
     int nextId = 1;        // 0 is ground
 };

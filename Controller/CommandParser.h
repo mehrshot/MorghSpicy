@@ -9,10 +9,26 @@
 #include "Model/NodeManager.h"
 #include "Controller/SimulationRunner.h"
 #include <functional>
+#include <optional>
 
 class Graph;
 class NodeManager;
 class SimulationRunner;
+
+struct SimSettingsAC {
+    ACSweepKind kind;
+    double w_start;
+    double w_stop;
+    int points;
+};
+
+struct SimSettingsPhase {
+    double w_base;
+    double phi_start;
+    double phi_stop;
+    int points;
+};
+
 
 class CommandParser {
 private:
@@ -43,10 +59,26 @@ public:
     std::function<void(const std::string& path, double Fs, double tStop, int chunk)> onScopeLoad;
     std::function<void()> onScopeClear;
 
-// New wrapper that adds 'scope' commands then falls back to your legacy parser
+    // --- Plot callbacks (bridge to App/Simulation) ---
+    std::function<void(int n_pos, int n_neg)> onPlotVoltageNodes;     // V(n_pos) - V(n_neg or GND)
+    std::function<void(const std::string& element)> onPlotCurrentElement; // I(element)
+    std::function<void(const std::string& element)> onPlotPowerElement;   // P(element)
+
+    std::function<void(const PlotData&)> onPlotData;\
+
+
+    // New wrapper that adds 'scope' commands then falls back to your legacy parser
     void parseCommand(const std::string& line);
 
     void parseCommandCore(const std::string& line);
+
+    void handleAC(std::istringstream& iss);
+    void handlePhase(std::istringstream& iss);
+
+    void handleValue(std::istringstream& iss);
+
+    static std::optional<double> parseValueWithPrefix(const std::string& str);
+
 
 };
 

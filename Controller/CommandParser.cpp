@@ -8,6 +8,21 @@
 #include <iostream>
 #include <fstream>
 #include <map>
+#include <regex>
+#include <fstream>
+#include <unordered_set>
+#include <filesystem>
+
+namespace {
+    static std::vector<OutputVariable> currentOutputs() {
+        return { { OutputVariable::VOLTAGE, std::string("N2") } };
+    }
+
+    static void appPlot(const PlotData& pd, const std::vector<OutputVariable>& outs) {
+        std::cout << "[Plot] points=" << pd.time_axis.size()
+                  << ", series=" << pd.data_series.size() << std::endl;
+    }
+}
 
 CommandParser::CommandParser() = default;
 
@@ -19,30 +34,54 @@ bool isNumber(const std::string& s) {
     return std::regex_match(s, pattern);
 }
 
-double parseValueWithPrefix(const std::string& str) {
+std::optional<double> CommandParser::parseValueWithPrefix(const std::string& str) {
+    if (str.empty()) return std::nullopt;
     try {
-        double factor = 1.0;
         std::string numPart = str;
+        double factor = 1.0;
 
-        char last = tolower(str.back());
+        std::string lower_str = str;
+        std::transform(lower_str.begin(), lower_str.end(), lower_str.begin(),
+                       [](unsigned char c){ return std::tolower(c); });
 
-        switch (last) {
-            case 'k': factor = 1e3; numPart = str.substr(0, str.size()-1); break;
-            case 'm': factor = 1e-3; numPart = str.substr(0, str.size()-1); break;
-            case 'u': factor = 1e-6; numPart = str.substr(0, str.size()-1); break;
-            case 'n': factor = 1e-9; numPart = str.substr(0, str.size()-1); break;
-            case 'p': factor = 1e-12; numPart = str.substr(0, str.size()-1); break;
-            case 'g': factor = 1e9; numPart = str.substr(0, str.size()-1); break;
-            case 'h': factor = 1e2; numPart = str.substr(0, str.size()-1); break;
-            case 't': factor = 1e12; numPart = str.substr(0, str.size()-1); break;
-            default:
-                if (isNumber(str)) return std::stod(str);
-                break;
+        // ابتدا پیشوندهای چندحرفی را بررسی کن
+        if (lower_str.length() > 3 && lower_str.substr(lower_str.length() - 3) == "meg") {
+            factor = 1e6;
+            numPart = str.substr(0, str.length() - 3);
+        }
+        else {
+            // سپس پیشوندهای تک‌حرفی را بررسی کن
+            char last = lower_str.back();
+            if (!std::isdigit(last)) {
+                numPart = str.substr(0, str.length() - 1);
+                switch (last) {
+                    case 't': factor = 1e12; break;
+                    case 'g': factor = 1e9;  break;
+                    case 'k': factor = 1e3;  break;
+                    case 'm': factor = 1e-3; break;
+                    case 'u': factor = 1e-6; break;
+                    case 'n': factor = 1e-9; break;
+                    case 'p': factor = 1e-12; break;
+                    default:
+                        // اگر پیشوند ناشناس بود، آن را بخشی از عدد در نظر بگیر
+                        numPart = str;
+                        factor = 1.0;
+                        break;
+                }
+            }
+        }
+
+        if (numPart.empty() || !isNumber(numPart)) {
+            if (isNumber(str)) { // حالت خاصی که عدد بدون پیشوند است
+                return std::stod(str);
+            }
+            return std::nullopt;
         }
 
         return std::stod(numPart) * factor;
+
     } catch (...) {
-        return -1e99; // خطا
+        return std::nullopt;
     }
 }
 
@@ -164,13 +203,13 @@ void CommandParser::parseCommandCore(const std::string& line) {
                 return;
             }
 
-            double v1 = parseValueWithPrefix(param_tokens[0]);
-            double v2 = parseValueWithPrefix(param_tokens[1]);
-            double td = parseValueWithPrefix(param_tokens[2]);
-            double tr = parseValueWithPrefix(param_tokens[3]);
-            double tf = parseValueWithPrefix(param_tokens[4]);
-            double pw = parseValueWithPrefix(param_tokens[5]);
-            double per = parseValueWithPrefix(param_tokens[6]);
+            double v1 = parseValueWithPrefix(param_tokens[0]).value_or(0.0);
+            double v2 = parseValueWithPrefix(param_tokens[1]).value_or(0.0);
+            double td = parseValueWithPrefix(param_tokens[2]).value_or(0.0);
+            double tr = parseValueWithPrefix(param_tokens[3]).value_or(0.0);
+            double tf = parseValueWithPrefix(param_tokens[4]).value_or(0.0);
+            double pw = parseValueWithPrefix(param_tokens[5]).value_or(0.0);
+            double per = parseValueWithPrefix(param_tokens[6]).value_or(0.0);
 
             int n1 = nodeManager->resolveId(n1_str);
             int n2 = nodeManager->resolveId(n2_str);
@@ -209,7 +248,7 @@ void CommandParser::parseCommandCore(const std::string& line) {
                 std::cerr << "Error: Syntax error for VCCS/VCVS\n";
                 return;
             }
-            double gain = parseValueWithPrefix(gain_str);
+            double gain = parseValueWithPrefix(gain_str).value_or(0.0);
             if (gain == -1e99) {
                 std::cerr << "Error: Invalid gain value\n";
                 return;
@@ -235,7 +274,7 @@ void CommandParser::parseCommandCore(const std::string& line) {
                 std::cerr << "Error: Syntax error for CCCS/CCVS\n";
                 return;
             }
-            double gain = parseValueWithPrefix(gain_str);
+            double gain = parseValueWithPrefix(gain_str).value_or(0.0);
             if (gain == -1e99) {
                 std::cerr << "Error: Invalid gain value\n";
                 return;
@@ -259,14 +298,14 @@ void CommandParser::parseCommandCore(const std::string& line) {
                 return;
             }
 
-            double voffset = parseValueWithPrefix(voffset_str);
-            double vamp = parseValueWithPrefix(vamp_str);
-            double freq = parseValueWithPrefix(freq_str);
+            double voffset = parseValueWithPrefix(voffset_str).value_or(0.0);
+            double vamp = parseValueWithPrefix(vamp_str).value_or(0.0);
+            double freq = parseValueWithPrefix(freq_str).value_or(0.0);
             double phase = 0.0;
 
             std::string optional;
             if (iss >> optional) {
-                phase = parseValueWithPrefix(optional);
+                phase = parseValueWithPrefix(optional).value_or(0.0);
             }
 
             int n1 = nodeManager->resolveId(n1_str);
@@ -295,7 +334,7 @@ void CommandParser::parseCommandCore(const std::string& line) {
             }
         }
 
-        double value = parseValueWithPrefix(value_str);
+        double value = parseValueWithPrefix(value_str).value_or(-1e99);
 
         if ((type != 'V' && type != 'I' && value <= 0) || value == -1e99) {
             std::string typeName = "Value";
@@ -452,17 +491,19 @@ void CommandParser::parseCommandCore(const std::string& line) {
         std::cout << "SUCCESS: Subcircuit '" << subName << "' saved to " << sub_path << std::endl;
     }
 
+    else if (cmd == "ac") { handleAC(iss); }
+    else if (cmd == "phase") { handlePhase(iss); }
 
 
 
-else {
+
+    else {
         std::cerr << "Error: Unknown command: " << cmd << std::endl;
     }
 
     }
 
 void CommandParser::parseCommand(const std::string& line) {
-    // --- Minimal, safe whitespace tokenizer ---
     auto split_ws = [](const std::string& s){
         std::vector<std::string> out; out.reserve(8);
         std::istringstream iss(s); std::string w;
@@ -476,46 +517,63 @@ void CommandParser::parseCommand(const std::string& line) {
 
     if (cmd == "label") { handleLabel(in); return; }
     if (cmd == "connect" || cmd == "short") { handleConnect(in); return; }
+    if (cmd == "value") { handleValue(in); return; }
+
 
     const auto parts = split_ws(line);
     if (!parts.empty() && parts[0] == "scope") {
-        // scope load path=<file> Fs=10000 t=0.1 chunk=8192
-        // scope clear
         if (parts.size() >= 2 && parts[1] == "load") {
-            std::string path;
-            double Fs   = 1000.0;
-            double tStop= 1.0;
-            int    chunk= 4096;
-
+            std::string path; double Fs = 10000.0, tStop = 0.1; int chunk = 8192;
             for (size_t i = 2; i < parts.size(); ++i) {
-                const auto& s = parts[i];
-                const auto  eq = s.find('=');
+                auto& tok = parts[i];
+                auto eq = tok.find('=');
                 if (eq == std::string::npos) continue;
-                const auto  k = s.substr(0, eq);
-                const auto  v = s.substr(eq + 1);
-                if      (k == "path")  path  = v;
-                else if (k == "Fs")    Fs    = std::stod(v);
-                else if (k == "t")     tStop = std::stod(v);
-                else if (k == "chunk") chunk = std::stoi(v);
+                std::string k = tok.substr(0, eq), v = tok.substr(eq+1);
+                if (k == "path") path = v;
+                else if (k == "Fs") Fs = parseValueWithPrefix(v).value_or(1000.0);
+                else if (k == "t") tStop = parseValueWithPrefix(v).value_or(0.1);
+                else if (k == "chunk") chunk = static_cast<int>(parseValueWithPrefix(v).value_or(4096.0));
             }
-
             if (onScopeLoad) onScopeLoad(path, Fs, tStop, chunk);
-            else std::cout << "[scope] load path=" << path << " Fs=" << Fs
-                           << " t=" << tStop << " chunk=" << chunk
-                           << " (no callback wired)\n";
-            return; // handled
+            return;
         }
         if (parts.size() >= 2 && parts[1] == "clear") {
             if (onScopeClear) onScopeClear();
-            else std::cout << "[scope] clear (no callback wired)\n";
-            return; // handled
+            return;
         }
-        // Unknown scope subcommand -> fall through to legacy
     }
 
-    // Not a 'scope' command (or unknown subcmd): use your original parser
+    if (cmd == "plot") {
+        std::string what; if (!(in >> what)) { return; }
+        for (auto& c : what) c = char(std::tolower(c));
+
+        double tstep = 1e-5, tstop = 0.05, tmax = 1e-3;
+
+        if (what == "v" || what == "voltage") {
+            std::string npos, nneg;
+            if (!(in >> npos)) { return; }
+            std::vector<OutputVariable> vars;
+            vars.push_back({OutputVariable::VOLTAGE, npos});
+            if (in >> nneg) vars.push_back({OutputVariable::VOLTAGE, nneg});
+            PlotData pd = simRunner->runTransient(tstep, tstop, tmax, vars);
+            if (onPlotData) onPlotData(pd);
+            return;
+        }
+
+        if (what == "i" || what == "current") {
+            std::string elem; if (!(in >> elem)) { return; }
+            std::vector<OutputVariable> vars = { {OutputVariable::CURRENT, elem} };
+            PlotData pd = simRunner->runTransient(tstep, tstop, tmax, vars);
+            if (onPlotData) onPlotData(pd);
+            return;
+        }
+
+        return;
+    }
+
     parseCommandCore(line);
 }
+
 
 void CommandParser::handlePrintCommand(std::istringstream& iss) {
     std::string analysis_type;
@@ -527,9 +585,9 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
             std::cerr << "Error: Syntax error. Usage: print TRAN <tstep> <tstop> <tmaxstep> <var1> ..." << std::endl;
             return;
         }
-        double tstep = parseValueWithPrefix(tstep_str);
-        double tstop = parseValueWithPrefix(tstop_str);
-        double tmaxstep = parseValueWithPrefix(tmaxstep_str);
+        double tstep = parseValueWithPrefix(tstep_str).value_or(0.0);
+        double tstop = parseValueWithPrefix(tstop_str).value_or(0.0);
+        double tmaxstep = parseValueWithPrefix(tmaxstep_str).value_or(0.0);
 
         if (tstep <= 0 || tstop <= 0 || tmaxstep <= 0 || tstep > tstop) {
             std::cerr << "Error: Invalid time parameters for TRAN analysis." << std::endl;
@@ -567,9 +625,9 @@ void CommandParser::handlePrintCommand(std::istringstream& iss) {
             std::cerr << "Error: Syntax error. Usage: print DC <SourceName> <Start> <End> <Increment> <var1>..." << std::endl;
             return;
         }
-        double start_val = parseValueWithPrefix(start_str);
-        double end_val = parseValueWithPrefix(end_str);
-        double inc_val = parseValueWithPrefix(inc_str);
+        double start_val = parseValueWithPrefix(start_str).value_or(0.0);
+        double end_val = parseValueWithPrefix(end_str).value_or(0.0);
+        double inc_val = parseValueWithPrefix(inc_str).value_or(0.0);
         if (inc_val <= 0) {
             std::cerr << "Error: Increment for DC sweep must be positive." << std::endl;
             return;
@@ -817,7 +875,7 @@ void CommandParser::handleAddComponent(const std::string& instance_name, const s
         int final_n1_id = nodeMap.at(n1_internal_str);
         int final_n2_id = nodeMap.at(n2_internal_str);
         std::string final_elem_name = instance_name + "." + elem_name_internal;
-        double value = parseValueWithPrefix(val_str_or_model); // Assumes val_str_or_model is a value
+        double value = parseValueWithPrefix(val_str_or_model).value_or(0.0);
 
         Element* new_elem = nullptr;
         char type = toupper(elem_name_internal[0]);
@@ -836,5 +894,42 @@ void CommandParser::handleAddComponent(const std::string& instance_name, const s
         graph->addElement(new_elem);
     }
     std::cout << "Successfully added subcircuit instance '" << instance_name << "' to the graph." << std::endl;
+}
+
+void CommandParser::handleAC(std::istringstream& iss) {
+    std::string sweep; double ws, we; int N;
+    iss >> sweep >> ws >> we >> N;
+
+    ACSweepSettings s{};
+    if (sweep == "lin") s.kind = ACSweepKind::Linear;
+    else if (sweep == "dec") s.kind = ACSweepKind::Decade;
+    else if (sweep == "oct") s.kind = ACSweepKind::Octave;
+    else return;
+
+    s.w_start = ws; s.w_stop = we; s.points = N;
+
+    std::vector<OutputVariable> outs = currentOutputs();
+    PlotData pd = simRunner->runACSweep(s, outs);
+    appPlot(pd, outs);
+}
+
+void CommandParser::handlePhase(std::istringstream& iss) {
+    double w0, phs, phe; int N;
+    iss >> w0 >> phs >> phe >> N;
+
+    PhaseSweepSettings s{w0, phs, phe, N};
+    std::vector<OutputVariable> outs = currentOutputs();
+    PlotData pd = simRunner->runPhaseSweep(s, outs);
+    appPlot(pd, outs);
+}
+
+void CommandParser::handleValue(std::istringstream& iss) {
+    std::string name, valueExpr;
+    if (!(iss >> name >> valueExpr)) return;
+    if (!simRunner) return;
+    auto val_opt = parseValueWithPrefix(valueExpr);
+    if (val_opt) {
+        simRunner->setElementValue(name, *val_opt);
+    }
 }
 

@@ -178,6 +178,21 @@ public:
         return false;
     }
 
+    void clear() {
+        for (Element* elem_ptr : elements) {
+            delete elem_ptr;
+        }
+        elements.clear();
+        for (Node* node_ptr : nodes) {
+            delete node_ptr;
+        }
+        nodes.clear();
+        for (Edge* edge_ptr : edges) {
+            delete edge_ptr;
+        }
+        edges.clear();
+    }
+
 };
 
 #endif // MORGHSPICY_GRAPH_H

@@ -22,6 +22,12 @@ MNASolver::MNASolver() :
 // Method to construct the MNA matrix (A and b)
 void MNASolver::constructMNAMatrix(const Graph& circuitGraph, double timestep_h,
                                    const Eigen::VectorXd& prev_solution) {
+    if (total_unknowns <= 0) {
+        A_matrix.resize(0,0);
+        b_vector.resize(0);
+        return;
+    }
+
     A_matrix.setZero();
     b_vector.setZero();
 
@@ -116,8 +122,14 @@ void MNASolver::initializeMatrix(const Graph& circuitGraph) {
     if (!has_ground_node) {
         std::cerr << "Error: No ground node (ID 0) detected in the circuit.\n";
         total_unknowns = 0;
+        A_matrix.resize(0,0);
+        b_vector.resize(0);
+        node_id_to_matrix_idx.clear();
+        num_non_ground_nodes = 0;
         return;
     }
+
+
 
     // 3. Create a sorted map from node ID to its corresponding matrix index (0, 1, 2, ...).
     std::vector<int> sorted_non_ground_node_ids(unique_node_ids.begin(), unique_node_ids.end());
