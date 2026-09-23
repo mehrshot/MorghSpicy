@@ -81,7 +81,9 @@ cmake --build build
 ./build/MorghSpicy.exe
 ```
 
-CLion works too, just open the folder (set the toolchain to MSYS2 UCRT64).
+CLion works too: in *Settings > Build, Execution, Deployment > Toolchains* add a MinGW toolchain with
+`C:\msys64\ucrt64` as its path and move it to the top, then *Tools > CMake > Reset Cache and Reload Project*.
+(An old `C:\MinGW` install is 32 bit and can't build this.)
 The build copies the font, the example circuits and the SDL dlls next to the exe. If you start it from
 Explorer and it complains about a missing dll, run it from the MSYS2 terminal or add
 `C:\msys64\ucrt64\bin` to `PATH`.

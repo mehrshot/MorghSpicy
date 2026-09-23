@@ -9,6 +9,12 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# old 32 bit MinGW (C:/MinGW) can't use the 64 bit SDL3 and has no C++20
+if (CMAKE_SIZEOF_VOID_P EQUAL 4 OR (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 10))
+    message(FATAL_ERROR "Compiler ${CMAKE_CXX_COMPILER} (${CMAKE_CXX_COMPILER_VERSION}) is too old or 32 bit. "
+            "Use a 64 bit GCC 10+ like MSYS2 UCRT64 (C:/msys64/ucrt64), see README.")
+endif()
+
 # --- Packages ---
 find_package(SDL3 REQUIRED CONFIG)
 find_package(SDL3_ttf REQUIRED CONFIG)
