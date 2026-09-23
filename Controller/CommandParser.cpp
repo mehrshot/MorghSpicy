@@ -1,38 +1,65 @@
 // Created by Ali-Er on 6/6/2025.
 
 #include "CommandParser.h"
-#include "Model/Graph.h"
-#include "Model/NodeManager.h"
-#include "Controller/SimulationRunner.h"
-#include <sstream>
+#include "Controller/Exceptions.h"
 #include <iostream>
+#include <iomanip>
 #include <fstream>
-#include <map>
 #include <regex>
-#include <fstream>
-#include <unordered_set>
-#include <filesystem>
+#include <algorithm>
+#include <cctype>
+
+namespace fs = std::filesystem;
 
 namespace {
-    static std::vector<OutputVariable> currentOutputs() {
-        return { { OutputVariable::VOLTAGE, std::string("N2") } };
+    std::string toUpper(std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::toupper(c); });
+        return s;
     }
 
-    static void appPlot(const PlotData& pd, const std::vector<OutputVariable>& outs) {
-        std::cout << "[Plot] points=" << pd.time_axis.size()
-                  << ", series=" << pd.data_series.size() << std::endl;
+    std::string trim(const std::string& s) {
+        size_t a = s.find_first_not_of(" \t\r\n");
+        if (a == std::string::npos) return "";
+        size_t b = s.find_last_not_of(" \t\r\n");
+        return s.substr(a, b - a + 1);
+    }
+
+    std::vector<std::string> splitWords(const std::string& s) {
+        std::vector<std::string> out;
+        std::istringstream iss(s);
+        std::string w;
+        while (iss >> w) out.push_back(w);
+        return out;
+    }
+
+    bool isNumber(const std::string& s) {
+        static const std::regex pattern(R"(^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$)");
+        return std::regex_match(s, pattern);
+    }
+
+    double needValue(const std::string& s, const std::string& what) {
+        auto v = CommandParser::parseValueWithPrefix(s);
+        if (!v) throw SyntaxError("invalid " + what + " '" + s + "'");
+        return *v;
+    }
+
+    // "PULSE(0 5 1m 1u 1u 5m 10m)" -> {"0","5",...}
+    std::vector<std::string> argsInParens(const std::string& text, const std::string& keyword) {
+        size_t first = text.find('(');
+        size_t last = text.rfind(')');
+        if (first == std::string::npos || last == std::string::npos || last < first) {
+            throw SyntaxError("malformed " + keyword + " parameters, missing parentheses");
+        }
+        return splitWords(text.substr(first + 1, last - first - 1));
+    }
+
+    bool isOutputToken(const std::string& tok) {
+        return tok.size() > 3 && (tok[0] == 'V' || tok[0] == 'v' || tok[0] == 'I' || tok[0] == 'i') && tok[1] == '(';
     }
 }
-
-CommandParser::CommandParser() = default;
 
 CommandParser::CommandParser(Graph* g, NodeManager* n, SimulationRunner* r)
         : graph(g), nodeManager(n), simRunner(r) {}
-
-bool isNumber(const std::string& s) {
-    std::regex pattern(R"(^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$)");
-    return std::regex_match(s, pattern);
-}
 
 std::optional<double> CommandParser::parseValueWithPrefix(const std::string& str) {
     if (str.empty()) return std::nullopt;
@@ -44,15 +71,13 @@ std::optional<double> CommandParser::parseValueWithPrefix(const std::string& str
         std::transform(lower_str.begin(), lower_str.end(), lower_str.begin(),
                        [](unsigned char c){ return std::tolower(c); });
 
-        // ابتدا پیشوندهای چندحرفی را بررسی کن
+        // "meg" first, otherwise 1meg would be read as 1m + "eg"
         if (lower_str.length() > 3 && lower_str.substr(lower_str.length() - 3) == "meg") {
             factor = 1e6;
             numPart = str.substr(0, str.length() - 3);
-        }
-        else {
-            // سپس پیشوندهای تک‌حرفی را بررسی کن
+        } else {
             char last = lower_str.back();
-            if (!std::isdigit(last)) {
+            if (!std::isdigit(static_cast<unsigned char>(last)) && last != '.') {
                 numPart = str.substr(0, str.length() - 1);
                 switch (last) {
                     case 't': factor = 1e12; break;
@@ -62,874 +87,668 @@ std::optional<double> CommandParser::parseValueWithPrefix(const std::string& str
                     case 'u': factor = 1e-6; break;
                     case 'n': factor = 1e-9; break;
                     case 'p': factor = 1e-12; break;
-                    default:
-                        // اگر پیشوند ناشناس بود، آن را بخشی از عدد در نظر بگیر
-                        numPart = str;
-                        factor = 1.0;
-                        break;
+                    case 'f': factor = 1e-15; break;
+                    default: return std::nullopt;
                 }
             }
         }
 
-        if (numPart.empty() || !isNumber(numPart)) {
-            if (isNumber(str)) { // حالت خاصی که عدد بدون پیشوند است
-                return std::stod(str);
-            }
-            return std::nullopt;
-        }
-
+        if (numPart.empty() || !isNumber(numPart)) return std::nullopt;
         return std::stod(numPart) * factor;
-
     } catch (...) {
         return std::nullopt;
     }
 }
 
-void CommandParser::parseCommandCore(const std::string& line) {
+std::string CommandParser::nodeName(int id) const {
+    std::string s = nodeManager->nameOf(id);
+    return s.empty() ? std::to_string(id) : s;
+}
+
+void CommandParser::parseCommand(const std::string& rawLine) {
+    std::string line = trim(rawLine);
+    if (line.empty() || line[0] == '*' || line[0] == '#') return;
+
     std::istringstream iss(line);
     std::string cmd;
     iss >> cmd;
 
-    if (cmd == "add") {
-        std::string name;
-        if (!(iss >> name)) {
-            std::cerr << "Error: Syntax error\n";
-            return;
+    try {
+        if (cmd == "add") handleAdd(iss);
+        else if (cmd == "delete") {
+            std::string name;
+            if (!(iss >> name)) throw SyntaxError("delete <name>");
+            if (!graph->removeElementByName(name)) throw ComponentNotFound(name);
         }
-        std::string subcircuit_path = "library/" + name + ".sub";
-        std::ifstream sub_file(subcircuit_path);
-
-        if (sub_file.is_open()) {
-            sub_file.close(); // We only needed to check for existence
-            std::string n1_str, n2_str;
-            if (!(iss >> n1_str >> n2_str)) {
-                std::cerr << "Error: Syntax for adding subcircuit is 'add <InstanceName> <Node1> <Node2>'" << std::endl;
-                return;
+        else if (cmd == "list") {
+            graph->canonicalizeNodes(*nodeManager);
+            std::string type_filter;
+            if (iss >> type_filter) graph->displayElementsByType(type_filter);
+            else graph->displayGraph();
+        }
+        else if (cmd == ".nodes") nodeManager->displayNodes();
+        else if (cmd == "rename") {
+            std::string sub_cmd, old_name, new_name;
+            if (!(iss >> sub_cmd >> old_name >> new_name) || sub_cmd != "node") {
+                throw SyntaxError("rename node <old_name> <new_name>");
             }
-            // Call the helper function to perform the flattening logic
-            handleAddComponent(name, n1_str, n2_str);
-            return; // IMPORTANT: Exit the function after handling the subcircuit
-        }
-
-        char type = name[0];
-
-        if (name == "GND") {
-            std::string node;
-            if (!(iss >> node)) {
-                std::cerr << "Error: Syntax error\n";
-                return;
+            if (!nodeManager->renameNode(old_name, new_name)) {
+                throw CircuitException("Node " + old_name + " does not exist (or is ground)");
             }
-            nodeManager->assignNodeAsGND(node);
-//            std::cout << "Node " << node << " assigned as GND\n";
-            return;
+            std::cout << "Node " << old_name << " renamed to " << new_name << std::endl;
         }
-
-        for (Element* e : graph->getElements()) {
-            if (e->name == name) {
-                std::cerr << "Error: " << name << " already exists in the circuit\n";
-                return;
-            }
+        else if (cmd == "label") handleLabel(iss);
+        else if (cmd == "connect" || cmd == "short") handleConnect(iss);
+        else if (cmd == "value") handleValue(iss);
+        else if (cmd == "load") handleLoad(iss);
+        else if (cmd == "save") handleSaveCommand(iss);
+        else if (cmd == "show") {
+            std::string t1, t2;
+            if (iss >> t1 >> t2 && t1 == "existing" && t2 == "schematics") handleShowSchematics();
+            else throw CircuitException("Unknown command. Did you mean 'show existing schematics'?");
         }
-
-        std::string n1_str, n2_str;
-        if (!(iss >> n1_str >> n2_str)) {
-            std::cerr << "Error: Syntax error\n";
-            return;
+        else if (cmd == "print") handlePrintCommand(iss);
+        else if (cmd == "plot") handlePlot(iss);
+        else if (cmd == "tran") handleTranSettings(iss);
+        else if (cmd == "ac") handleAC(iss, false);
+        else if (cmd == "phase") handlePhase(iss, false);
+        else if (cmd == "subcircuit") handleSubcircuitCreate(iss);
+        else if (cmd == "scope") handleScope(splitWords(line));
+        else if (cmd == "reset") {
+            graph->clear();
+            nodeManager->reset();
+            std::cout << "Circuit cleared." << std::endl;
         }
-        std::string next_token;
-        // Get the current position in the stream
-        std::streampos original_pos = iss.tellg();
-
-        if (iss >> next_token && next_token == "PULSE") {
-            std::string params_str;
-            std::getline(iss, params_str); // Read the rest of the line: (v1 v2 td tr tf pw per)
-
-            // Remove parentheses from the parameters string
-            size_t first = params_str.find('(');
-            size_t last = params_str.rfind(')');
-            if (first == std::string::npos || last == std::string::npos) {
-                std::cerr << "Error: Malformed PULSE parameters. Missing parentheses." << std::endl;
-                return;
-            }
-            params_str = params_str.substr(first + 1, last - first - 1);
-
-            std::istringstream param_stream(params_str);
-            std::vector<std::string> param_tokens;
-            std::string tok;
-            while (param_stream >> tok) {
-                param_tokens.push_back(tok);
-            }
-
-            // minimal whitespace split (local helper is fine too)
-            auto split_ws = [](const std::string& s){
-                std::vector<std::string> out; std::string w; std::istringstream iss(s);
-                while (iss >> w) out.push_back(w);
-                return out;
-            };
-
-            std::vector<std::string> parts = split_ws(line);
-            if (!parts.empty() && parts[0] == "scope") {
-                // scope load path=<file> Fs=10000 t=0.1 chunk=8192
-                // scope clear
-                if (parts.size() >= 2 && parts[1] == "load") {
-                    std::string path;
-                    double Fs = 1000.0, tStop = 1.0;
-                    int chunk = 4096;
-                    for (size_t i = 2; i < parts.size(); ++i) {
-                        auto& s = parts[i];
-                        auto eq = s.find('=');
-                        if (eq == std::string::npos) continue;
-                        auto k = s.substr(0, eq);
-                        auto v = s.substr(eq + 1);
-                        if (k == "path") path = v;
-                        else if (k == "Fs") Fs = std::stod(v);
-                        else if (k == "t") tStop = std::stod(v);
-                        else if (k == "chunk") chunk = std::stoi(v);
-                    }
-                    // hook this into App if you already added callbacks; otherwise just echo:
-                    std::cout << "[scope] load path=" << path << " Fs=" << Fs
-                              << " t=" << tStop << " chunk=" << chunk << "\n";
-                    return; // prevent the rest of your parser from re-handling "scope"
-                }
-                if (parts.size() >= 2 && parts[1] == "clear") {
-                    std::cout << "[scope] clear\n";
-                    return;
-                }
-            }
-
-
-            if (param_tokens.size() != 7) {
-                std::cerr << "Error: Incorrect PULSE parameters. Expected: PULSE(v1 v2 td tr tf pw per)" << std::endl;
-                return;
-            }
-
-            double v1 = parseValueWithPrefix(param_tokens[0]).value_or(0.0);
-            double v2 = parseValueWithPrefix(param_tokens[1]).value_or(0.0);
-            double td = parseValueWithPrefix(param_tokens[2]).value_or(0.0);
-            double tr = parseValueWithPrefix(param_tokens[3]).value_or(0.0);
-            double tf = parseValueWithPrefix(param_tokens[4]).value_or(0.0);
-            double pw = parseValueWithPrefix(param_tokens[5]).value_or(0.0);
-            double per = parseValueWithPrefix(param_tokens[6]).value_or(0.0);
-
-            int n1 = nodeManager->resolveId(n1_str);
-            int n2 = nodeManager->resolveId(n2_str);
-
-            graph->addElement(new PulseSource(name, n1, n2, v1, v2, td, tr, tf, pw, per));
-            std::cout << "Added pulse source: " << name << std::endl;
-            return; // Important: Exit after handling the pulse source
-        }
-        else {
-            // If it wasn't a PULSE source, go back to the original position in the stream
-            iss.seekg(original_pos);
-        }
-
-
-        if (type == 'D') {
-            std::string model;
-            if (!(iss >> model)) {
-                std::cerr << "Error: Syntax error\n";
-                return;
-            }
-            static std::unordered_set<std::string> validModels = {"D", "Z"};
-            if (!validModels.count(model)) {
-                std::cerr << "Error: Model " << model << " not found in library\n";
-                return;
-            }
-            int n1 = nodeManager->resolveId(n1_str);
-            int n2 = nodeManager->resolveId(n2_str);
-            graph->addElement(new Diode(name, n1, n2, model));
-            std::cout << "Added diode: " << name << std::endl;
-            return;
-        }
-
-        if (type == 'G' || type == 'E') {
-            std::string c1_str, c2_str, gain_str;
-            if (!(iss >> c1_str >> c2_str >> gain_str)) {
-                std::cerr << "Error: Syntax error for VCCS/VCVS\n";
-                return;
-            }
-            double gain = parseValueWithPrefix(gain_str).value_or(0.0);
-            if (gain == -1e99) {
-                std::cerr << "Error: Invalid gain value\n";
-                return;
-            }
-            int n1 = nodeManager->resolveId(n1_str);
-            int n2 = nodeManager->resolveId(n2_str);
-            int c1 = nodeManager->resolveId(c1_str);
-            int c2 = nodeManager->resolveId(c2_str);
-            Element* e = nullptr;
-            if (type == 'G') {
-                e = new vccs(name, n1, n2, c1, c2, gain);
-            } else {
-                e = new vcvs(name, n1, n2, c1, c2, gain);
-            }
-            graph->addElement(e);
-            std::cout << "Added element: " << name << std::endl;
-            return;
-        }
-
-        if (type == 'F' || type == 'H') {
-            std::string ctrl_name, gain_str;
-            if (!(iss >> ctrl_name >> gain_str)) {
-                std::cerr << "Error: Syntax error for CCCS/CCVS\n";
-                return;
-            }
-            double gain = parseValueWithPrefix(gain_str).value_or(0.0);
-            if (gain == -1e99) {
-                std::cerr << "Error: Invalid gain value\n";
-                return;
-            }
-            int n1 = nodeManager->resolveId(n1_str);
-            int n2 = nodeManager->resolveId(n2_str);
-            Element* e = nullptr;
-            if (type == 'F') {
-                e = new cccs(name, n1, n2, ctrl_name, gain);
-            } else {
-                e = new ccvs(name, n1, n2, ctrl_name, gain);
-            }
-            graph->addElement(e);
-            std::cout << "Added element: " << name << std::endl;
-            return;
-        }
-        if (type == 'S') { // Sinusoidal source
-            std::string voffset_str, vamp_str, freq_str, phase_str;
-            if (!(iss >> voffset_str >> vamp_str >> freq_str)) {
-                std::cerr << "Error: Syntax error for Sinusoidal Source. Usage: add Sname node1 node2 Voffset Vamp Freq [Phase]" << std::endl;
-                return;
-            }
-
-            double voffset = parseValueWithPrefix(voffset_str).value_or(0.0);
-            double vamp = parseValueWithPrefix(vamp_str).value_or(0.0);
-            double freq = parseValueWithPrefix(freq_str).value_or(0.0);
-            double phase = 0.0;
-
-            std::string optional;
-            if (iss >> optional) {
-                phase = parseValueWithPrefix(optional).value_or(0.0);
-            }
-
-            int n1 = nodeManager->resolveId(n1_str);
-            int n2 = nodeManager->resolveId(n2_str);
-
-            Element* e = new SinusoidalSource(name, n1, n2, voffset, vamp, freq, phase);
-            graph->addElement(e);
-            std::cout << "Added sinusoidal source: " << name << std::endl;
-            return;
-        }
-
-
-        std::string value_str;
-        if (!(iss >> value_str)) {
-            std::cerr << "Error: Syntax error (missing value)\n";
-            return;
-        }
-        float posX = 100.0f, posY = 100.0f; // Default position if not provided
-        std::string x_str, y_str;
-        if (iss >> x_str >> y_str) {
-            try {
-                posX = std::stof(x_str);
-                posY = std::stof(y_str);
-            } catch(...) {
-                // If conversion fails, just ignore and use the default position
-            }
-        }
-
-        double value = parseValueWithPrefix(value_str).value_or(-1e99);
-
-        if ((type != 'V' && type != 'I' && value <= 0) || value == -1e99) {
-            std::string typeName = "Value";
-            if (type == 'R') typeName = "Resistance";
-            else if (type == 'C') typeName = "Capacitance";
-            else if (type == 'L') typeName = "Inductance";
-            std::cerr << "Error: " << typeName << " cannot be zero or negative\n";
-            return;
-        }
-
-
-        int n1 = nodeManager->resolveId(n1_str);
-        int n2 = nodeManager->resolveId(n2_str);
-        Element* e = nullptr;
-        switch (type) {
-            case 'R': e = new Resistor(name, n1, n2, value); break;
-            case 'C': e = new Capacitor(name, n1, n2, value); break;
-            case 'L': e = new Inductor(name, n1, n2, value); break;
-            case 'V': e = new VoltageSource(name, n1, n2, value); break;
-            case 'I': e = new CurrentSource(name, n1, n2, value); break;
-            default:
-                std::cerr << "Error: Element " << name << " not found in library\n";
-                return;
-        }
-        graph->addElement(e);
-        std::cout << "Added element: " << name << std::endl;
-
-
-    } else if (cmd == "delete") {
-        std::string name;
-        if (!(iss >> name)) {
-            std::cerr << "Error: Syntax error\n";
-            return;
-        }
-        if (!graph->removeElementByName(name)) {
-            std::cerr << "Error: Cannot delete " << name << "; component not found\n";
-        }
-    } else if (cmd == "list") {
-        std::string type_filter;
-        if (iss >> type_filter) {
-            graph->displayElementsByType(type_filter);
-        } else {
-            graph->desplayGraph();
-        }
-    } else if (cmd == ".nodes") {
-        nodeManager->displayNodes();
-    } else if (cmd == "rename") {
-        std::string sub_cmd, old_name, new_name;
-        if (!(iss >> sub_cmd >> old_name >> new_name) || sub_cmd != "node") {
-            std::cerr << "ERROR: Invalid syntax. correct format: rename node <old_name> <new_name>" << std::endl;
-            return;
-        }
-        nodeManager->renameNode(old_name, new_name);
-
-    }else if (cmd == "load") {
-        std::string filepath;
-        if (!(iss >> filepath)) {
-            std::cerr << "Error: Syntax error. Usage: load <file_path>" << std::endl;
-            return;
-        }
-
-        std::ifstream infile(filepath);
-        if (!infile.is_open()) {
-            std::cerr << "Error: Cannot open file: " << filepath << std::endl;
-            return;
-        }
-
-        std::cout << "Loading circuit from file: " << filepath << std::endl;
-
-        std::string file_line;
-        while (std::getline(infile, file_line)) {
-            if (file_line.empty() || file_line[0] == '*' || file_line[0] == '#') {
-                continue;
-            }
-
-            std::istringstream line_stream(file_line);
-            std::string type, name, n1, n2, val;
-
-            if (!(line_stream >> type >> name >> n1 >> n2 >> val)) {
-                std::cerr << "Error: Malformed line in file: " << file_line << std::endl;
-                continue;
-            }
-
-            std::string command_to_process = "add " + name + " " + n1 + " " + n2 + " " + val;
-
-            parseCommand(command_to_process);
-        }
-        std::cout << std::flush;
-        std::cout << "Finished loading from file." << std::endl;
+        else if (cmd == "help") printHelp();
+        else throw CircuitException("Unknown command: " + cmd + " (type 'help')");
+    } catch (const CircuitException& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
     }
-    else if (cmd == "show") {
-        std::string token1, token2;
-        if (iss >> token1 >> token2 && token1 == "existing" && token2 == "schematics") {
-            handleShowSchematics();
-        } else {
-            std::cerr << "Error: Unknown command. Did you mean 'show existing schematics'?" << std::endl;
-        }
+}
 
-    }
-    else if (cmd == "print") {
-        handlePrintCommand(iss);
-    }
-    else if (cmd == "save") {
-        handleSaveCommand(iss);
-    }
-    else if (cmd == "subcircuit") {
-        std::string action, subName, from_keyword, n1_str, n2_str;
-        if (!(iss >> action >> subName >> from_keyword >> n1_str >> n2_str) || action != "create" || from_keyword != "from") {
-            std::cerr << "Error: Syntax error. Usage: subcircuit create <SubName> from <Node1> <Node2>" << std::endl;
-            return;
-        }
-        std::filesystem::path library_dir = "library";
-        if (!std::filesystem::exists(library_dir)) {
-            std::filesystem::create_directory(library_dir);
-        }
+void CommandParser::handleAdd(std::istringstream& iss) {
+    std::string name;
+    if (!(iss >> name)) throw SyntaxError("add <name> <node1> <node2> <value>");
 
-        // Define the output file path
-        std::string sub_path = library_dir.string() + "/" + subName + ".sub";
-        std::ofstream outfile(sub_path);
-
-        if (!outfile.is_open()) {
-            std::cerr << "Error: Could not open file for writing: " << sub_path << std::endl;
-            return;
-        }
-
-        // --- Main Saving Logic ---
-
-        // 1. Write the 'ports' line to the file.
-        // The node names provided by the user become the internal port names for the subcircuit.
-        outfile << "ports " << n1_str << " " << n2_str << std::endl;
-
-        // 2. Iterate through all elements in the current graph and write them to the file.
-        for (const auto& elem : graph->getElements()) {
-            // We need the string names of the nodes for saving, not their numeric IDs.
-            std::string node1_name = nodeManager->nameOf(elem->node1);
-            std::string node2_name = nodeManager->nameOf(elem->node2);
-
-            // If a node doesn't have a label, use its numeric ID as its name.
-            if (node1_name.empty()) node1_name = std::to_string(elem->node1);
-            if (node2_name.empty()) node2_name = std::to_string(elem->node2);
-
-            // Write the element's definition in the "add <name> <n1> <n2> <value/model>" format.
-            outfile << "add " << elem->name << " " << node1_name << " " << node2_name << " ";
-
-            if (elem->type == DIODE) {
-                outfile << dynamic_cast<Diode*>(elem)->model << std::endl;
-            } else {
-                // For now, we save the simple value. More complex sources would need more logic.
-                outfile << elem->value << std::endl;
-            }
-        }
-
-        outfile.close();
-        std::cout << "SUCCESS: Subcircuit '" << subName << "' saved to " << sub_path << std::endl;
-    }
-
-    else if (cmd == "ac") { handleAC(iss); }
-    else if (cmd == "phase") { handlePhase(iss); }
-
-
-
-
-    else {
-        std::cerr << "Error: Unknown command: " << cmd << std::endl;
-    }
-
-    }
-
-void CommandParser::parseCommand(const std::string& line) {
-    auto split_ws = [](const std::string& s){
-        std::vector<std::string> out; out.reserve(8);
-        std::istringstream iss(s); std::string w;
-        while (iss >> w) out.push_back(w);
-        return out;
-    };
-
-    std::istringstream in(line);
-    std::string cmd;
-    if (!(in >> cmd)) return;
-
-    if (cmd == "label") { handleLabel(in); return; }
-    if (cmd == "connect" || cmd == "short") { handleConnect(in); return; }
-    if (cmd == "value") { handleValue(in); return; }
-
-
-    const auto parts = split_ws(line);
-    if (!parts.empty() && parts[0] == "scope") {
-        if (parts.size() >= 2 && parts[1] == "load") {
-            std::string path; double Fs = 10000.0, tStop = 0.1; int chunk = 8192;
-            for (size_t i = 2; i < parts.size(); ++i) {
-                auto& tok = parts[i];
-                auto eq = tok.find('=');
-                if (eq == std::string::npos) continue;
-                std::string k = tok.substr(0, eq), v = tok.substr(eq+1);
-                if (k == "path") path = v;
-                else if (k == "Fs") Fs = parseValueWithPrefix(v).value_or(1000.0);
-                else if (k == "t") tStop = parseValueWithPrefix(v).value_or(0.1);
-                else if (k == "chunk") chunk = static_cast<int>(parseValueWithPrefix(v).value_or(4096.0));
-            }
-            if (onScopeLoad) onScopeLoad(path, Fs, tStop, chunk);
-            return;
-        }
-        if (parts.size() >= 2 && parts[1] == "clear") {
-            if (onScopeClear) onScopeClear();
-            return;
-        }
-    }
-
-    if (cmd == "plot") {
-        std::string what; if (!(in >> what)) { return; }
-        for (auto& c : what) c = char(std::tolower(c));
-
-        double tstep = 1e-5, tstop = 0.05, tmax = 1e-3;
-
-        if (what == "v" || what == "voltage") {
-            std::string npos, nneg;
-            if (!(in >> npos)) { return; }
-            std::vector<OutputVariable> vars;
-            vars.push_back({OutputVariable::VOLTAGE, npos});
-            if (in >> nneg) vars.push_back({OutputVariable::VOLTAGE, nneg});
-            PlotData pd = simRunner->runTransient(tstep, tstop, tmax, vars);
-            if (onPlotData) onPlotData(pd);
-            return;
-        }
-
-        if (what == "i" || what == "current") {
-            std::string elem; if (!(in >> elem)) { return; }
-            std::vector<OutputVariable> vars = { {OutputVariable::CURRENT, elem} };
-            PlotData pd = simRunner->runTransient(tstep, tstop, tmax, vars);
-            if (onPlotData) onPlotData(pd);
-            return;
-        }
-
+    if (name == "GND") {
+        std::string node;
+        if (!(iss >> node)) throw SyntaxError("add GND <node>");
+        nodeManager->assignNodeAsGND(node);
         return;
     }
 
-    parseCommandCore(line);
+    // old way of adding a subcircuit: add <SubName> <n1> <n2>
+    if (fs::exists("library/" + name + ".sub")) {
+        std::string n1_str, n2_str;
+        if (!(iss >> n1_str >> n2_str)) throw SyntaxError("add <SubName> <Node1> <Node2>");
+        handleAddComponent(name, name, n1_str, n2_str);
+        return;
+    }
+
+    if (graph->findElement(name)) throw ElementAlreadyExists(name);
+
+    std::string n1_str, n2_str;
+    if (!(iss >> n1_str >> n2_str)) throw SyntaxError("add <name> <node1> <node2> <value>");
+
+    std::string rest;
+    std::getline(iss, rest);
+    rest = trim(rest);
+    const std::string restUp = toUpper(rest);
+    std::vector<std::string> params = splitWords(rest);
+    char type = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
+
+    // PULSE(v1 v2 td tr tf pw per)
+    if (restUp.rfind("PULSE", 0) == 0) {
+        auto p = argsInParens(rest, "PULSE");
+        if (p.size() != 7) throw SyntaxError("expected PULSE(v1 v2 td tr tf pw per)");
+        double v[7];
+        for (int i = 0; i < 7; ++i) v[i] = needValue(p[i], "PULSE parameter");
+        int n1 = nodeManager->resolveId(n1_str);
+        int n2 = nodeManager->resolveId(n2_str);
+        graph->addElement(new PulseSource(name, n1, n2, v[0], v[1], v[2], v[3], v[4], v[5], v[6]));
+        std::cout << "Added pulse source: " << name << std::endl;
+        return;
+    }
+
+    // SIN(offset amplitude freq [phase]) works for any name, S-names can skip the parentheses
+    if (restUp.rfind("SIN", 0) == 0 || type == 'S') {
+        std::vector<std::string> p = (restUp.rfind("SIN", 0) == 0) ? argsInParens(rest, "SIN") : params;
+        if (p.size() < 3) throw SyntaxError("add <name> <n1> <n2> <Voffset> <Vamp> <Freq> [Phase]");
+        double off = needValue(p[0], "offset");
+        double amp = needValue(p[1], "amplitude");
+        double freq = needValue(p[2], "frequency");
+        double phase = p.size() > 3 ? needValue(p[3], "phase") : 0.0;
+        int n1 = nodeManager->resolveId(n1_str);
+        int n2 = nodeManager->resolveId(n2_str);
+        graph->addElement(new SinusoidalSource(name, n1, n2, off, amp, freq, phase));
+        std::cout << "Added sinusoidal source: " << name << std::endl;
+        return;
+    }
+
+    if (type == 'X') {
+        if (params.size() != 1) throw SyntaxError("add X<name> <n1> <n2> <SubName>");
+        handleAddComponent(name, params[0], n1_str, n2_str);
+        return;
+    }
+
+    if (type == 'D') {
+        if (params.empty()) throw SyntaxError("add D<name> <n1> <n2> <D|Z>");
+        const std::string& model = params[0];
+        if (model != "D" && model != "Z") throw CircuitException("Model " + model + " not found in library");
+        int n1 = nodeManager->resolveId(n1_str);
+        int n2 = nodeManager->resolveId(n2_str);
+        graph->addElement(new Diode(name, n1, n2, model));
+        std::cout << "Added diode: " << name << std::endl;
+        return;
+    }
+
+    if (type == 'G' || type == 'E') {
+        if (params.size() < 3) throw SyntaxError("add " + std::string(1, type) + "<name> <n1> <n2> <ctrl+> <ctrl-> <gain>");
+        double gain = needValue(params[2], "gain");
+        int n1 = nodeManager->resolveId(n1_str);
+        int n2 = nodeManager->resolveId(n2_str);
+        int c1 = nodeManager->resolveId(params[0]);
+        int c2 = nodeManager->resolveId(params[1]);
+        if (type == 'G') graph->addElement(new vccs(name, n1, n2, c1, c2, gain));
+        else graph->addElement(new vcvs(name, n1, n2, c1, c2, gain));
+        std::cout << "Added element: " << name << std::endl;
+        return;
+    }
+
+    if (type == 'F' || type == 'H') {
+        if (params.size() < 2) throw SyntaxError("add " + std::string(1, type) + "<name> <n1> <n2> <ControlSource> <gain>");
+        double gain = needValue(params[1], "gain");
+        int n1 = nodeManager->resolveId(n1_str);
+        int n2 = nodeManager->resolveId(n2_str);
+        if (type == 'F') graph->addElement(new cccs(name, n1, n2, params[0], gain));
+        else graph->addElement(new ccvs(name, n1, n2, params[0], gain));
+        std::cout << "Added element: " << name << std::endl;
+        return;
+    }
+
+    if (type != 'R' && type != 'C' && type != 'L' && type != 'V' && type != 'I') {
+        throw CircuitException("Element " + name + " not found in library");
+    }
+    if (params.empty()) throw SyntaxError("missing value for " + name);
+    double value = needValue(params[0], "value");
+
+    if (type != 'V' && type != 'I' && value <= 0) {
+        std::string typeName = (type == 'R') ? "Resistance" : (type == 'C') ? "Capacitance" : "Inductance";
+        throw CircuitException(typeName + " cannot be zero or negative");
+    }
+
+    int n1 = nodeManager->resolveId(n1_str);
+    int n2 = nodeManager->resolveId(n2_str);
+    Element* e = nullptr;
+    switch (type) {
+        case 'R': e = new Resistor(name, n1, n2, value); break;
+        case 'C': e = new Capacitor(name, n1, n2, value); break;
+        case 'L': e = new Inductor(name, n1, n2, value); break;
+        case 'V': e = new VoltageSource(name, n1, n2, value); break;
+        default:  e = new CurrentSource(name, n1, n2, value); break;
+    }
+    graph->addElement(e);
+    std::cout << "Added element: " << name << std::endl;
 }
 
+std::vector<OutputVariable> CommandParser::readOutputs(std::istringstream& iss) const {
+    static const std::regex var_regex(R"(([VvIi])\((.+)\))");
+    std::vector<OutputVariable> vars;
+    std::string tok;
+    while (iss >> tok) {
+        std::smatch m;
+        if (!std::regex_match(tok, m, var_regex)) throw SyntaxError("invalid variable format: " + tok);
+        OutputVariable v;
+        v.type = (std::toupper(m[1].str()[0]) == 'V') ? OutputVariable::VOLTAGE : OutputVariable::CURRENT;
+        v.name = m[2].str();
+        vars.push_back(v);
+    }
+    if (vars.empty()) throw CircuitException("No output variables specified (for example V(N1) or I(R1))");
+    return vars;
+}
+
+// print the table and/or send it to the plot window
+void CommandParser::emit(const PlotData& pd, bool printTable) {
+    if (pd.empty()) return;
+    if (printTable || !onPlotData) SimulationRunner::printTable(pd, std::cout);
+    if (onPlotData) onPlotData(pd);
+}
 
 void CommandParser::handlePrintCommand(std::istringstream& iss) {
     std::string analysis_type;
     iss >> analysis_type;
+    analysis_type = toUpper(analysis_type);
 
     if (analysis_type == "TRAN") {
-        std::string tstep_str, tstop_str, tmaxstep_str;
-        if (!(iss >> tstep_str >> tstop_str >> tmaxstep_str)) {
-            std::cerr << "Error: Syntax error. Usage: print TRAN <tstep> <tstop> <tmaxstep> <var1> ..." << std::endl;
-            return;
+        // print TRAN <tstep> <tstop> [<tmaxstep>] V(n) I(e) ...
+        std::vector<double> nums;
+        std::string tok;
+        std::streampos pos = iss.tellg();
+        while (iss >> tok) {
+            if (isOutputToken(tok)) break;
+            nums.push_back(needValue(tok, "time"));
+            pos = iss.tellg();
         }
-        double tstep = parseValueWithPrefix(tstep_str).value_or(0.0);
-        double tstop = parseValueWithPrefix(tstop_str).value_or(0.0);
-        double tmaxstep = parseValueWithPrefix(tmaxstep_str).value_or(0.0);
+        if (nums.size() < 2 || nums.size() > 3) throw SyntaxError("print TRAN <tstep> <tstop> [<tmaxstep>] <var1> ...");
 
-        if (tstep <= 0 || tstop <= 0 || tmaxstep <= 0 || tstep > tstop) {
-            std::cerr << "Error: Invalid time parameters for TRAN analysis." << std::endl;
-            return;
-        }
+        iss.clear();
+        iss.seekg(pos);
+        auto vars = readOutputs(iss);
 
-        std::vector<OutputVariable> requested_vars;
-        std::string var_token;
-        std::regex var_regex(R"((V|I)\((.+)\))");
-        while (iss >> var_token) {
-            std::smatch matches;
-            if (std::regex_match(var_token, matches, var_regex)) {
-                OutputVariable out_var;
-                out_var.type = (matches[1].str() == "V") ? OutputVariable::VOLTAGE : OutputVariable::CURRENT;
-                out_var.name = matches[2].str();
-                if (out_var.type == OutputVariable::CURRENT && !graph->findElement(out_var.name)) {
-                    std::cout << "Error: Component " << out_var.name << " not found in circuit" << std::endl;
-                    return;
-                }
-                requested_vars.push_back(out_var);
-            } else {
-                std::cerr << "Error: Invalid variable format: " << var_token << std::endl;
-                return;
-            }
+        double tstep = nums[0], tstop = nums[1], tmax = nums.size() > 2 ? nums[2] : 0.0;
+        if (tstep <= 0 || tstop <= 0 || tmax < 0 || tstep > tstop) {
+            throw CircuitException("Invalid time parameters for TRAN analysis.");
         }
-        if (requested_vars.empty()) {
-            std::cerr << "Error: No output variables specified for print command." << std::endl;
-            return;
-        }
-        simRunner->runTransient(tstep, tstop, tmaxstep, requested_vars);
+        emit(simRunner->runTransient(tstep, tstop, tmax, vars), true);
 
     } else if (analysis_type == "DC") {
         std::string sourceName, start_str, end_str, inc_str;
         if (!(iss >> sourceName >> start_str >> end_str >> inc_str)) {
-            std::cerr << "Error: Syntax error. Usage: print DC <SourceName> <Start> <End> <Increment> <var1>..." << std::endl;
-            return;
+            throw SyntaxError("print DC <SourceName> <Start> <End> <Increment> <var1> ...");
         }
-        double start_val = parseValueWithPrefix(start_str).value_or(0.0);
-        double end_val = parseValueWithPrefix(end_str).value_or(0.0);
-        double inc_val = parseValueWithPrefix(inc_str).value_or(0.0);
-        if (inc_val <= 0) {
-            std::cerr << "Error: Increment for DC sweep must be positive." << std::endl;
-            return;
-        }
-        std::vector<OutputVariable> requested_vars;
-        std::string var_token;
-        std::regex var_regex(R"((V|I)\((.+)\))");
-        while (iss >> var_token) {
-            std::smatch matches;
-            if (std::regex_match(var_token, matches, var_regex)) {
-                OutputVariable out_var;
-                out_var.type = (matches[1].str() == "V") ? OutputVariable::VOLTAGE : OutputVariable::CURRENT;
-                out_var.name = matches[2].str();
-                requested_vars.push_back(out_var);
-            } else {
-                std::cerr << "Error: Invalid variable format: " << var_token << std::endl;
-                return;
-            }
-        }
-        if (requested_vars.empty()) {
-            std::cerr << "Error: No output variables specified for print command." << std::endl;
-            return;
-        }
-        simRunner->runDCSweep(sourceName, start_val, end_val, inc_val, requested_vars);
+        double start = needValue(start_str, "start value");
+        double stop = needValue(end_str, "end value");
+        double inc = needValue(inc_str, "increment");
+        if (inc <= 0) throw CircuitException("Increment for DC sweep must be positive.");
+        auto vars = readOutputs(iss);
+        emit(simRunner->runDCSweep(sourceName, start, stop, inc, vars), true);
+
+    } else if (analysis_type == "AC") {
+        handleAC(iss, true);
+    } else if (analysis_type == "PHASE") {
+        handlePhase(iss, true);
     } else {
-        std::cerr << "Error: Analysis type '" << analysis_type << "' not supported." << std::endl;
+        throw CircuitException("Analysis type '" + analysis_type + "' not supported.");
     }
 }
-void CommandParser::handleShowSchematics() {
-    while (true) {
-        std::vector<std::filesystem::path> schematics;
-        std::cout << "\n-Choose existing schematic to load:" << std::endl;
 
-        int i = 1;
-        try {
-            // Find all .txt files in the "schematics" directory
-            for (const auto& entry : std::filesystem::directory_iterator("schematics")) {
-                if (entry.path().extension() == ".txt") {
-                    schematics.push_back(entry.path());
-                    std::cout << i++ << "-" << entry.path().stem().string() << std::endl;
-                }
-            }
-        } catch (const std::filesystem::filesystem_error& e) {
-            std::cerr << "Error accessing directory: " << e.what() << std::endl;
-            return;
-        }
+// ac <lin|dec|oct> <w_start> <w_stop> <points> V(n) ...
+void CommandParser::handleAC(std::istringstream& iss, bool print) {
+    std::string sweep, ws, we, np;
+    if (!(iss >> sweep >> ws >> we >> np)) throw SyntaxError("ac <lin|dec|oct> <w_start> <w_stop> <points> <var1> ...");
 
-        if (schematics.empty()) {
-            std::cout << "No schematic files (.txt) found." << std::endl;
-            return;
-        }
+    ACSweepSettings s;
+    sweep = toUpper(sweep);
+    if (sweep == "LIN") s.kind = ACSweepKind::Linear;
+    else if (sweep == "DEC") s.kind = ACSweepKind::Decade;
+    else if (sweep == "OCT") s.kind = ACSweepKind::Octave;
+    else throw SyntaxError("sweep type must be lin, dec or oct");
 
-        std::cout << ">>> ";
-        std::string choice;
-        if (!std::getline(std::cin, choice)) {
-            break; // Exit on EOF
-        }
-        if (choice == "return") {
-            break; // Exit if user types "return"
-        }
+    s.w_start = needValue(ws, "w_start");
+    s.w_stop = needValue(we, "w_stop");
+    s.points = static_cast<int>(needValue(np, "number of points"));
+    auto vars = readOutputs(iss);
+    emit(simRunner->runACSweep(s, vars), print);
+}
 
-        int choice_num;
-        try {
-            // Convert user input to a number
-            choice_num = std::stoi(choice);
-            if (choice_num < 1 || choice_num > schematics.size()) {
-                std::cerr << "-Error: Inappropriate input" << std::endl;
-                continue; // Re-display menu on invalid number
-            }
-        } catch (...) {
-            std::cerr << "-Error: Inappropriate input" << std::endl;
-            continue; // Re-display menu on non-numeric input
-        }
+// phase <w> <phi_start> <phi_stop> <points> [source] V(n) ...
+void CommandParser::handlePhase(std::istringstream& iss, bool print) {
+    std::string w0, ps, pe, np;
+    if (!(iss >> w0 >> ps >> pe >> np)) throw SyntaxError("phase <w> <phi_start> <phi_stop> <points> [source] <var1> ...");
 
-        // Get the path of the chosen schematic
-        std::filesystem::path chosen_path = schematics[choice_num - 1];
+    PhaseSweepSettings s;
+    s.w_base = needValue(w0, "w");
+    s.phi_start = needValue(ps, "start phase");
+    s.phi_stop = needValue(pe, "stop phase");
+    s.points = static_cast<int>(needValue(np, "number of points"));
 
-        // Construct a "load" command string from the chosen path
-        std::string load_command = "load " + chosen_path.string();
-
-        // Execute the load command by calling the main parser function
-        std::cout << "Executing: " << load_command << std::endl;
-        parseCommand(load_command);
-
-        // Exit the menu loop to return to the main command prompt
-        break;
+    std::string tok;
+    std::streampos pos = iss.tellg();
+    if (iss >> tok && !isOutputToken(tok)) {
+        s.source = tok;
+    } else {
+        iss.clear();
+        iss.seekg(pos);
     }
+    auto vars = readOutputs(iss);
+    emit(simRunner->runPhaseSweep(s, vars), print);
+}
+
+// plot v <node> [node2]   /   plot i <element>
+void CommandParser::handlePlot(std::istringstream& in) {
+    std::string what;
+    if (!(in >> what)) throw SyntaxError("plot v <node> [node2] | plot i <element>");
+    for (auto& c : what) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    std::vector<OutputVariable> vars;
+    std::string a, b;
+    if (what == "v" || what == "voltage") {
+        if (!(in >> a)) throw SyntaxError("plot v <node> [node2]");
+        vars.push_back({OutputVariable::VOLTAGE, a});
+        if (in >> b) vars.push_back({OutputVariable::VOLTAGE, b});
+    } else if (what == "i" || what == "current") {
+        if (!(in >> a)) throw SyntaxError("plot i <element>");
+        vars.push_back({OutputVariable::CURRENT, a});
+    } else {
+        throw SyntaxError("plot v <node> [node2] | plot i <element>");
+    }
+    emit(simRunner->runTransient(tranStep, tranStop, tranMax, vars), false);
+}
+
+void CommandParser::handleTranSettings(std::istringstream& in) {
+    std::string a, b, c;
+    if (!(in >> a >> b)) {
+        std::cout << "tran settings: tstep=" << tranStep << " tstop=" << tranStop << " tmaxstep=" << tranMax << std::endl;
+        return;
+    }
+    double step = needValue(a, "tstep");
+    double stop = needValue(b, "tstop");
+    double mx = (in >> c) ? needValue(c, "tmaxstep") : 0.0;
+    if (step <= 0 || stop <= 0 || step > stop || mx < 0) throw CircuitException("Invalid time parameters for TRAN analysis.");
+    tranStep = step;
+    tranStop = stop;
+    tranMax = mx;
+    std::cout << "plot will use tstep=" << tranStep << " tstop=" << tranStop << std::endl;
+}
+
+void CommandParser::handleValue(std::istringstream& iss) {
+    std::string name, valueExpr;
+    if (!(iss >> name >> valueExpr)) throw SyntaxError("value <element> <new value>");
+    double v = needValue(valueExpr, "value");
+    Element* e = graph->findElement(name);
+    if (!e) throw ElementNotFound(name);
+    if (e->type == DIODE || e->type == SINUSOIDAL_SOURCE || e->type == PULSE_SOURCE) {
+        throw CircuitException(name + " has more than one parameter, delete it and add it again");
+    }
+    if ((e->type == RESISTOR || e->type == CAPACITOR || e->type == INDUCTOR) && v <= 0) {
+        throw CircuitException("Value of " + name + " must be positive");
+    }
+    simRunner->setElementValue(name, v);
+    std::cout << name << " = " << v << std::endl;
+}
+
+void CommandParser::handleShowSchematics() {
+    lastSchematics.clear();
+    if (!fs::exists("schematics")) {
+        std::cout << "No schematics folder yet (save something first)." << std::endl;
+        return;
+    }
+    for (const auto& entry : fs::directory_iterator("schematics")) {
+        if (entry.path().extension() == ".txt") lastSchematics.push_back(entry.path());
+    }
+    std::sort(lastSchematics.begin(), lastSchematics.end());
+
+    if (lastSchematics.empty()) {
+        std::cout << "No schematic files (.txt) found." << std::endl;
+        return;
+    }
+    std::cout << "-Choose existing schematic to load:" << std::endl;
+    for (size_t i = 0; i < lastSchematics.size(); ++i) {
+        std::cout << i + 1 << "-" << lastSchematics[i].stem().string() << std::endl;
+    }
+    std::cout << "(type: load <number>)" << std::endl;
+}
+
+void CommandParser::handleLoad(std::istringstream& iss) {
+    std::string arg;
+    if (!(iss >> arg)) throw SyntaxError("load <file_path> | load <number>");
+
+    fs::path path = arg;
+    bool isIndex = !arg.empty() && std::all_of(arg.begin(), arg.end(), ::isdigit);
+    if (isIndex && !fs::exists(path)) {
+        size_t idx = std::stoul(arg);
+        if (idx < 1 || idx > lastSchematics.size()) throw CircuitException("Inappropriate input");
+        path = lastSchematics[idx - 1];
+    }
+    if (!fs::exists(path) && fs::exists(fs::path("schematics") / path)) path = fs::path("schematics") / path;
+
+    std::ifstream infile(path);
+    if (!infile.is_open()) throw CircuitException("Cannot open file: " + path.string());
+
+    // loading replaces whatever was there before
+    graph->clear();
+    nodeManager->reset();
+    std::cout << "Loading circuit from file: " << path.string() << std::endl;
+
+    std::string file_line;
+    while (std::getline(infile, file_line)) {
+        auto words = splitWords(file_line);
+        if (words.empty() || words[0][0] == '*' || words[0][0] == '#') continue;
+
+        // saved format is "R R1 n1 n2 1k", anything else is treated as a normal command
+        if (words[0].size() == 1 && std::isalpha(static_cast<unsigned char>(words[0][0])) && words.size() >= 4) {
+            std::string rest = trim(file_line);
+            parseCommand("add " + rest.substr(1));
+        } else {
+            parseCommand(file_line);
+        }
+    }
+    std::cout << "Finished loading from file." << std::endl;
 }
 
 void CommandParser::handleSaveCommand(std::istringstream& iss) {
     std::string user_path_str;
-    if (!(iss >> user_path_str)) {
-        std::cerr << "Error: Syntax error. Usage: save <path/to/filename.txt>" << std::endl;
-        return;
-    }
+    if (!(iss >> user_path_str)) throw SyntaxError("save <path/to/filename.txt>");
 
-    std::filesystem::path user_path(user_path_str);
-    std::filesystem::path final_path;
+    fs::path final_path(user_path_str);
+    if (!final_path.has_extension()) final_path += ".txt";
 
-    // بررسی می‌کنیم که آیا کاربر مسیر کامل داده یا فقط نام فایل
-    // متد has_parent_path() چک می‌کند که آیا در مسیر، پوشه‌ای ذکر شده است یا نه
-    if (user_path.has_parent_path() && !user_path.parent_path().empty()) {
-        // کاربر یک مسیر کامل یا نسبی داده است (مثلا C:\circuits\c1.txt یا ../my_circuits/c1.txt)
-        final_path = user_path;
-        // اگر پوشه والد وجود ندارد، آن را می‌سازیم
-        if (!std::filesystem::exists(final_path.parent_path())) {
-            try {
-                std::filesystem::create_directories(final_path.parent_path());
-            } catch (const std::filesystem::filesystem_error& e) {
-                std::cerr << "Error: Could not create directory " << final_path.parent_path() << ": " << e.what() << std::endl;
-                return;
-            }
-        }
+    if (final_path.has_parent_path()) {
+        // full or relative path given, make the folder if it's not there
+        std::error_code ec;
+        fs::create_directories(final_path.parent_path(), ec);
+        if (ec) throw CircuitException("Could not create directory " + final_path.parent_path().string());
     } else {
-        // کاربر فقط نام فایل را داده است (مثلا c1.txt)، پس در پوشه پیش‌فرض schematics ذخیره می‌کنیم
-        std::filesystem::path schematics_dir = "schematics";
-        if (!std::filesystem::exists(schematics_dir)) {
-            std::filesystem::create_directory(schematics_dir);
-        }
-        final_path = schematics_dir / user_path;
+        // only a file name -> goes to the default schematics folder
+        fs::create_directories("schematics");
+        final_path = fs::path("schematics") / final_path;
     }
 
     std::ofstream outfile(final_path);
+    if (!outfile.is_open()) throw CircuitException("Could not open file for writing: " + final_path.string());
 
-    if (!outfile.is_open()) {
-        std::cerr << "Error: Could not open file for writing: " << final_path << std::endl;
-        return;
-    }
+    graph->canonicalizeNodes(*nodeManager);
+    outfile << std::setprecision(12);
+    outfile << "* MorghSpicy circuit\n";
 
-    // نوشتن اطلاعات هر قطعه در فایل
-    for (const auto& elem : graph->getElements()) {
-        char type_char = ' ';
-        // تبدیل enum به کاراکتر برای ذخیره‌سازی
+    for (Element* elem : graph->getElements()) {
+        std::string n1 = nodeName(elem->node1);
+        std::string n2 = nodeName(elem->node2);
+        char letter = static_cast<char>(std::toupper(static_cast<unsigned char>(elem->name[0])));
+
         switch (elem->type) {
-            case RESISTOR: type_char = 'R'; break;
-            case CAPACITOR: type_char = 'C'; break;
-            case INDUCTOR: type_char = 'L'; break;
-            case VOLTAGE_SOURCE: type_char = 'V'; break;
-            case CURRENT_SOURCE: type_char = 'I'; break;
-            case DIODE: type_char = 'D'; break;
-            case VCCS: type_char = 'G'; break;
-            case VCVS: type_char = 'E'; break;
-            case CCCS: type_char = 'F'; break;
-            case CCVS: type_char = 'H'; break;
-                // SINUSOIDAL_SOURCE و PULSE_SOURCE به فرمت متفاوتی نیاز دارند و در اینجا ساده‌سازی شده‌اند
-                // برای ذخیره کامل آن‌ها باید منطق جداگانه‌ای پیاده‌سازی شود.
-            default: continue; // قطعات ناشناس یا پیچیده را ذخیره نکن
+            case DIODE:
+                outfile << "D " << elem->name << " " << n1 << " " << n2 << " " << static_cast<Diode*>(elem)->model;
+                break;
+            case VCCS:
+            case VCVS: {
+                int c1, c2;
+                if (auto* g = dynamic_cast<vccs*>(elem)) { c1 = g->controlPos(); c2 = g->controlNeg(); }
+                else { auto* e = static_cast<vcvs*>(elem); c1 = e->controlPos(); c2 = e->controlNeg(); }
+                outfile << letter << " " << elem->name << " " << n1 << " " << n2 << " "
+                        << nodeName(c1) << " " << nodeName(c2) << " " << elem->value;
+                break;
+            }
+            case CCCS:
+                outfile << "F " << elem->name << " " << n1 << " " << n2 << " "
+                        << static_cast<cccs*>(elem)->controlName() << " " << elem->value;
+                break;
+            case CCVS:
+                outfile << "H " << elem->name << " " << n1 << " " << n2 << " "
+                        << static_cast<ccvs*>(elem)->controlName() << " " << elem->value;
+                break;
+            case SINUSOIDAL_SOURCE: {
+                auto* s = static_cast<SinusoidalSource*>(elem);
+                outfile << "V " << elem->name << " " << n1 << " " << n2 << " SIN("
+                        << s->offset() << " " << s->amplitude() << " " << s->freq() << " " << s->phaseDeg() << ")";
+                break;
+            }
+            case PULSE_SOURCE: {
+                auto* p = static_cast<PulseSource*>(elem);
+                outfile << "V " << elem->name << " " << n1 << " " << n2 << " PULSE("
+                        << p->v1 << " " << p->v2 << " " << p->td << " " << p->tr << " "
+                        << p->tf << " " << p->pw << " " << p->per << ")";
+                break;
+            }
+            default:
+                outfile << letter << " " << elem->name << " " << n1 << " " << n2 << " " << elem->value;
+                break;
         }
-
-        std::string n1_name = nodeManager->getNodeNameById(elem->node1);
-        std::string n2_name = nodeManager->getNodeNameById(elem->node2);
-
-        // فرمت ذخیره‌سازی باید مشابه فرمت خواندن دستور add باشد
-        outfile << type_char << " " << elem->name << " " << n1_name << " " << n2_name << " ";
-
-        if (elem->type == DIODE) {
-            // برای دیود، مدل آن ذخیره می‌شود
-            outfile << dynamic_cast<Diode*>(elem)->model << std::endl;
-        } else {
-            // برای سایر قطعات ساده، مقدارشان ذخیره می‌شود
-            outfile << elem->value << std::endl;
-        }
+        outfile << "\n";
     }
 
-    outfile.close();
     std::cout << "SUCCESS: Circuit saved to " << final_path.string() << std::endl;
 }
 
-int CommandParser::nodeFromToken(const std::string& tok) {
-    return nodeManager->resolveId(tok);
+// subcircuit create <SubName> from <Node1> <Node2>
+void CommandParser::handleSubcircuitCreate(std::istringstream& iss) {
+    std::string action, subName, from_keyword, p1, p2;
+    if (!(iss >> action >> subName >> from_keyword >> p1 >> p2) || action != "create" || from_keyword != "from") {
+        throw SyntaxError("subcircuit create <SubName> from <Node1> <Node2>");
+    }
+    auto id1 = nodeManager->findId(p1);
+    auto id2 = nodeManager->findId(p2);
+    if (!id1 || !id2) throw CircuitException("Port nodes must exist in the circuit");
+
+    fs::create_directories("library");
+    std::string sub_path = "library/" + subName + ".sub";
+    std::ofstream outfile(sub_path);
+    if (!outfile.is_open()) throw CircuitException("Could not open file for writing: " + sub_path);
+
+    graph->canonicalizeNodes(*nodeManager);
+    auto portName = [&](int id) {
+        if (id == *id1) return p1;
+        if (id == *id2) return p2;
+        return nodeName(id);
+    };
+
+    outfile << std::setprecision(12);
+    outfile << "ports " << p1 << " " << p2 << "\n";
+    for (Element* elem : graph->getElements()) {
+        if (elem->type != RESISTOR && elem->type != CAPACITOR && elem->type != INDUCTOR &&
+            elem->type != VOLTAGE_SOURCE && elem->type != CURRENT_SOURCE && elem->type != DIODE) {
+            std::cerr << "Warning: " << elem->name << " can't be stored in a subcircuit, skipped." << std::endl;
+            continue;
+        }
+        outfile << "add " << elem->name << " " << portName(elem->node1) << " " << portName(elem->node2) << " ";
+        if (elem->type == DIODE) outfile << static_cast<Diode*>(elem)->model << "\n";
+        else outfile << elem->value << "\n";
+    }
+    std::cout << "SUCCESS: Subcircuit '" << subName << "' saved to " << sub_path << std::endl;
+}
+
+void CommandParser::handleAddComponent(const std::string& instance_name, const std::string& sub_name,
+                                       const std::string& external_n1_str, const std::string& external_n2_str) {
+    std::string sub_path = "library/" + sub_name + ".sub";
+    std::ifstream sub_file(sub_path);
+    if (!sub_file.is_open()) throw CircuitException("Cannot open subcircuit file: " + sub_path);
+
+    // first line: ports <name1> <name2>
+    std::string line, keyword, port1, port2;
+    std::getline(sub_file, line);
+    std::istringstream port_iss(line);
+    if (!(port_iss >> keyword >> port1 >> port2) || keyword != "ports") {
+        throw CircuitException("Invalid subcircuit file. First line must be 'ports <name1> <name2>'.");
+    }
+
+    // internal node name -> node id in the main circuit
+    std::map<std::string, int> nodeMap;
+    nodeMap[port1] = nodeManager->resolveId(external_n1_str);
+    nodeMap[port2] = nodeManager->resolveId(external_n2_str);
+
+    int added = 0;
+    while (std::getline(sub_file, line)) {
+        std::istringstream elem_iss(line);
+        std::string add_cmd, elem_name, n1s, n2s, val;
+        if (!(elem_iss >> add_cmd >> elem_name >> n1s >> n2s >> val) || add_cmd != "add") continue;
+
+        for (const auto& node_str : {n1s, n2s}) {
+            if (nodeMap.count(node_str)) continue;
+            // ground inside the subcircuit is the same ground, every other node is private
+            if (NodeManager::isGroundToken(node_str)) nodeMap[node_str] = 0;
+            else nodeMap[node_str] = nodeManager->labelNode(instance_name + "." + node_str);
+        }
+
+        int n1 = nodeMap.at(n1s);
+        int n2 = nodeMap.at(n2s);
+        std::string final_name = instance_name + "." + elem_name;
+        if (graph->findElement(final_name)) throw ElementAlreadyExists(final_name);
+
+        double value = parseValueWithPrefix(val).value_or(0.0);
+        Element* e = nullptr;
+        switch (std::toupper(static_cast<unsigned char>(elem_name[0]))) {
+            case 'R': e = new Resistor(final_name, n1, n2, value); break;
+            case 'C': e = new Capacitor(final_name, n1, n2, value); break;
+            case 'L': e = new Inductor(final_name, n1, n2, value); break;
+            case 'V': e = new VoltageSource(final_name, n1, n2, value); break;
+            case 'I': e = new CurrentSource(final_name, n1, n2, value); break;
+            case 'D': e = new Diode(final_name, n1, n2, val); break;
+            default:
+                std::cerr << "Warning: Skipping unknown element '" << elem_name << "' inside subcircuit." << std::endl;
+                continue;
+        }
+        graph->addElement(e);
+        ++added;
+    }
+    std::cout << "Added subcircuit " << instance_name << " (" << sub_name << ", " << added << " elements)" << std::endl;
 }
 
 void CommandParser::handleLabel(std::istringstream& in) {
-    // syntax 1:  label <node|label> <name>
-    // syntax 2:  label <name>             (creates a new isolated node with that name)
+    // label <node|label> <name>   or   label <name> (new empty node)
     std::string a, b;
-    if (!(in >> a)) { std::cout << "usage: label <node|label> <name>\n"; return; }
-    if (!(in >> b)) { // single token => create fresh node with that label
+    if (!(in >> a)) throw SyntaxError("label <node|label> <name>");
+    if (!(in >> b)) {
         nodeManager->labelNode(a);
-        graph->canonicalizeNodes(*nodeManager);
         std::cout << "labeled new node as " << a << "\n";
         return;
     }
     int id = nodeManager->resolveId(a);
     nodeManager->setLabel(id, b);
-    graph->canonicalizeNodes(*nodeManager);
     std::cout << "labeled node " << id << " as " << b << "\n";
 }
 
 void CommandParser::handleConnect(std::istringstream& in) {
-    // connect two names or numbers: connect vdd net1
-    std::string a,b;
-    if (!(in >> a >> b)) { std::cout << "usage: connect <a> <b>\n"; return; }
-    int rep = nodeManager->connect(a,b);
-    graph->canonicalizeNodes(*nodeManager);
-    std::cout << "connected; rep = " << rep << "\n";
+    std::string a, b;
+    if (!(in >> a >> b)) throw SyntaxError("connect <a> <b>");
+    nodeManager->connect(a, b);
+    std::cout << "connected " << a << " and " << b << "\n";
 }
-void CommandParser::handleAddComponent(const std::string& instance_name, const std::string& external_n1_str, const std::string& external_n2_str) {
-    std::string sub_path = "library/" + instance_name + ".sub";
-    std::ifstream sub_file(sub_path);
 
-    if (!sub_file.is_open()) {
-        std::cerr << "Error: Cannot open subcircuit file: " << sub_path << std::endl;
+// scope load path=<file> Fs=10000 t=0.1 chunk=8192   /   scope clear
+void CommandParser::handleScope(const std::vector<std::string>& parts) {
+    if (parts.size() >= 2 && parts[1] == "load") {
+        std::string path;
+        double Fs = 10000.0, tStop = 0.1;
+        int chunk = 8192;
+        for (size_t i = 2; i < parts.size(); ++i) {
+            auto eq = parts[i].find('=');
+            if (eq == std::string::npos) continue;
+            std::string k = parts[i].substr(0, eq), v = parts[i].substr(eq + 1);
+            if (k == "path") path = v;
+            else if (k == "Fs") Fs = parseValueWithPrefix(v).value_or(Fs);
+            else if (k == "t") tStop = parseValueWithPrefix(v).value_or(tStop);
+            else if (k == "chunk") chunk = static_cast<int>(parseValueWithPrefix(v).value_or(chunk));
+        }
+        if (path.empty()) throw SyntaxError("scope load path=<file> [Fs=..] [t=..] [chunk=..]");
+        if (onScopeLoad) onScopeLoad(path, Fs, tStop, chunk);
+        else std::cout << "scope only works in the GUI" << std::endl;
         return;
     }
-
-    // 1. Read the port definition line
-    std::string line, keyword, internal_port1_name, internal_port2_name;
-    std::getline(sub_file, line);
-    std::istringstream port_iss(line);
-    if (!(port_iss >> keyword >> internal_port1_name >> internal_port2_name) || keyword != "ports") {
-        std::cerr << "Error: Invalid subcircuit file. First line must be 'ports <name1> <name2>'." << std::endl;
+    if (parts.size() >= 2 && parts[1] == "clear") {
+        if (onScopeClear) onScopeClear();
         return;
     }
-
-    // 2. Resolve the EXTERNAL nodes in the main circuit
-    int external_n1_id = nodeManager->resolveId(external_n1_str);
-    int external_n2_id = nodeManager->resolveId(external_n2_str);
-
-    // 3. Create a map to translate internal subcircuit node names to final IDs in the main graph
-    std::map<std::string, int> nodeMap;
-    nodeMap[internal_port1_name] = external_n1_id;
-    nodeMap[internal_port2_name] = external_n2_id;
-
-    // 4. Read the rest of the file to add internal elements
-    while (std::getline(sub_file, line)) {
-        if (line.empty() || line[0] == '#') continue;
-
-        std::istringstream elem_iss(line);
-        std::string add_cmd, elem_name_internal, n1_internal_str, n2_internal_str, val_str_or_model;
-
-        if (!(elem_iss >> add_cmd >> elem_name_internal >> n1_internal_str >> n2_internal_str >> val_str_or_model)) continue;
-
-        // For each node of the internal element, find its final ID in the main graph.
-        // If it's a new internal node, create a fresh, unique ID for it.
-        for (const auto& node_str : {n1_internal_str, n2_internal_str}) {
-            if (nodeMap.find(node_str) == nodeMap.end()) {
-                std::string unique_label = instance_name + "." + node_str;
-                int new_id = nodeManager->labelNode(unique_label);
-                nodeMap[node_str] = new_id;
-            }
-        }
-
-        // Create the element with the mapped node IDs and a unique name
-        int final_n1_id = nodeMap.at(n1_internal_str);
-        int final_n2_id = nodeMap.at(n2_internal_str);
-        std::string final_elem_name = instance_name + "." + elem_name_internal;
-        double value = parseValueWithPrefix(val_str_or_model).value_or(0.0);
-
-        Element* new_elem = nullptr;
-        char type = toupper(elem_name_internal[0]);
-        switch (type) {
-            case 'R': new_elem = new Resistor(final_elem_name, final_n1_id, final_n2_id, value); break;
-            case 'C': new_elem = new Capacitor(final_elem_name, final_n1_id, final_n2_id, value); break;
-            case 'L': new_elem = new Inductor(final_elem_name, final_n1_id, final_n2_id, value); break;
-            case 'V': new_elem = new VoltageSource(final_elem_name, final_n1_id, final_n2_id, value); break;
-            case 'I': new_elem = new CurrentSource(final_elem_name, final_n1_id, final_n2_id, value); break;
-            case 'D': new_elem = new Diode(final_elem_name, final_n1_id, final_n2_id, val_str_or_model); break;
-                // Add cases for other element types (VCCS, VCVS, etc.) as needed
-            default:
-                std::cerr << "Warning: Skipping unknown element type '" << type << "' inside subcircuit." << std::endl;
-                continue;
-        }
-        graph->addElement(new_elem);
-    }
-    std::cout << "Successfully added subcircuit instance '" << instance_name << "' to the graph." << std::endl;
+    throw SyntaxError("scope load ... | scope clear");
 }
 
-void CommandParser::handleAC(std::istringstream& iss) {
-    std::string sweep; double ws, we; int N;
-    iss >> sweep >> ws >> we >> N;
-
-    ACSweepSettings s{};
-    if (sweep == "lin") s.kind = ACSweepKind::Linear;
-    else if (sweep == "dec") s.kind = ACSweepKind::Decade;
-    else if (sweep == "oct") s.kind = ACSweepKind::Octave;
-    else return;
-
-    s.w_start = ws; s.w_stop = we; s.points = N;
-
-    std::vector<OutputVariable> outs = currentOutputs();
-    PlotData pd = simRunner->runACSweep(s, outs);
-    appPlot(pd, outs);
+void CommandParser::printHelp() const {
+    std::cout <<
+        "Circuit:\n"
+        "  add R1 n1 n2 1k            (R, C, L, V, I)\n"
+        "  add D1 n1 n2 D|Z           diode / zener\n"
+        "  add V1 n1 n2 PULSE(v1 v2 td tr tf pw per)\n"
+        "  add V1 n1 n2 SIN(off amp f [phase])   or   add S1 n1 n2 off amp f [phase]\n"
+        "  add E1 n1 n2 c+ c- gain    (G = VCCS)      add H1 n1 n2 Vctrl gain  (F = CCCS)\n"
+        "  add GND n1    connect a b    label n1 name    rename node a b\n"
+        "  delete R1    value R1 2k    list [type]    .nodes    reset\n"
+        "  subcircuit create Name from n1 n2    add X1 n1 n2 Name\n"
+        "Files:\n"
+        "  save file.txt    load file.txt    show existing schematics    load <number>\n"
+        "Analysis:\n"
+        "  print TRAN tstep tstop [tmaxstep] V(n1) I(R1) ...\n"
+        "  print DC V1 start stop step V(n1) ...\n"
+        "  ac dec|oct|lin w_start w_stop points V(n1) ...     (w in rad/s)\n"
+        "  phase w phi_start phi_stop points [source] V(n1) ...\n"
+        "  tran tstep tstop [tmaxstep]    plot v n1 [n2]    plot i R1\n"
+        "  scope load path=file.txt Fs=10k t=0.1    scope clear\n";
 }
-
-void CommandParser::handlePhase(std::istringstream& iss) {
-    double w0, phs, phe; int N;
-    iss >> w0 >> phs >> phe >> N;
-
-    PhaseSweepSettings s{w0, phs, phe, N};
-    std::vector<OutputVariable> outs = currentOutputs();
-    PlotData pd = simRunner->runPhaseSweep(s, outs);
-    appPlot(pd, outs);
-}
-
-void CommandParser::handleValue(std::istringstream& iss) {
-    std::string name, valueExpr;
-    if (!(iss >> name >> valueExpr)) return;
-    if (!simRunner) return;
-    auto val_opt = parseValueWithPrefix(valueExpr);
-    if (val_opt) {
-        simRunner->setElementValue(name, *val_opt);
-    }
-}
-

@@ -3,65 +3,108 @@
 //
 
 #include <set>
-#include <unordered_set>
 
 #include "MNASolver.h"
 #include "Graph.h"
 #include "Elements.h"
-#include "Node.h"
-#include "Common_Includes.h"
 
-MNASolver::MNASolver() :
-        num_ground_nodes(0), // Node 0 => GND
-        num_non_ground_nodes(0),
-        num_voltage_sources(0),
-        num_inductors(0),
-        total_unknowns(0) {}
+bool MNASolver::initializeMatrix(const Graph& circuitGraph) {
+    total_unknowns = 0;
+    num_non_ground_nodes = 0;
+    num_extra_vars = 0;
+    node_id_to_matrix_idx.clear();
+    A_matrix.resize(0, 0);
+    b_vector.resize(0);
 
-
-// Method to construct the MNA matrix (A and b)
-void MNASolver::constructMNAMatrix(const Graph& circuitGraph, double timestep_h,
-                                   const Eigen::VectorXd& prev_solution) {
-    if (total_unknowns <= 0) {
-        A_matrix.resize(0,0);
-        b_vector.resize(0);
-        return;
+    const auto& elems = circuitGraph.getElements();
+    if (elems.empty()) {
+        std::cerr << "Error: The circuit is empty." << std::endl;
+        return false;
     }
+
+    // 1. collect all the non-ground nodes (control nodes of E/G count too)
+    std::set<int> node_ids;
+    bool has_ground = false;
+    auto addNode = [&](int id) {
+        if (id == 0) has_ground = true;
+        else node_ids.insert(id);
+    };
+    for (Element* e : elems) {
+        addNode(e->node1);
+        addNode(e->node2);
+        if (auto* g = dynamic_cast<vccs*>(e)) { addNode(g->controlPos()); addNode(g->controlNeg()); }
+        if (auto* v = dynamic_cast<vcvs*>(e)) { addNode(v->controlPos()); addNode(v->controlNeg()); }
+    }
+
+    if (!has_ground) {
+        std::cerr << "Error: No ground node detected in the circuit." << std::endl;
+        return false;
+    }
+
+    // 2. std::set is already sorted, so the matrix order follows the node ids
+    for (int id : node_ids) {
+        node_id_to_matrix_idx[id] = num_non_ground_nodes++;
+    }
+
+    // 3. every V, L, E, H, SIN, PULSE gets a current variable after the node voltages
+    for (Element* e : elems) {
+        e->extraVariableIndex = e->introducesExtraVariable ? num_extra_vars++ : -1;
+    }
+
+    // 4. current controlled sources need the element they are looking at
+    for (Element* e : elems) {
+        bool ok = true;
+        if (auto* f = dynamic_cast<cccs*>(e)) ok = f->linkControlSource(elems);
+        else if (auto* h = dynamic_cast<ccvs*>(e)) ok = h->linkControlSource(elems);
+        if (!ok) return false;
+    }
+
+    total_unknowns = num_non_ground_nodes + num_extra_vars;
+    if (total_unknowns == 0) {
+        std::cerr << "Error: Nothing to solve, every element is connected to ground only." << std::endl;
+        return false;
+    }
+
+    A_matrix = Eigen::MatrixXd::Zero(total_unknowns, total_unknowns);
+    b_vector = Eigen::VectorXd::Zero(total_unknowns);
+    solution_vector = Eigen::VectorXd::Zero(total_unknowns);
+    return true;
+}
+
+void MNASolver::constructMNAMatrix(const Graph& circuitGraph, double timestep_h,
+                                   const Eigen::VectorXd& prev_solution,
+                                   const Eigen::VectorXd& guess) {
+    if (total_unknowns <= 0) return;
 
     A_matrix.setZero();
     b_vector.setZero();
 
-    const std::vector<Element*>& all_elements_in_graph = circuitGraph.getElements();
-    for (Element* elem_ptr : all_elements_in_graph) {
-        elem_ptr->stampMNA(A_matrix, b_vector, node_id_to_matrix_idx,
-                           getExtraVariableStartIndex(), prev_solution, timestep_h);
+    StampInfo info{node_id_to_matrix_idx, getExtraVariableStartIndex(), prev_solution, guess, timestep_h};
+    for (Element* elem_ptr : circuitGraph.getElements()) {
+        elem_ptr->stampMNA(A_matrix, b_vector, info);
     }
-    const double GMIN = 1e-12; // use 1e-9 only if you still see singular matrices
+
     for (int i = 0; i < num_non_ground_nodes; ++i) {
         A_matrix(i, i) += gmin;
     }
-//    std::cout << "MNA Matrix constructed." << std::endl;
 }
 
 Eigen::VectorXd MNASolver::solve() {
     if (total_unknowns == 0) {
         std::cerr << "Error: Cannot solve. Total unknowns is zero." << std::endl;
-        solution_vector.setZero();
-        return solution_vector;
+        return {};
     }
 
-    if (!A_matrix.fullPivLu().isInvertible()) {
-        std::cerr << "Error: Circuit matrix is singular (not invertible). Cannot solve." << std::endl;
-        solution_vector.setZero(); // Return zero vector to indicate failure
-        return solution_vector;
+    Eigen::FullPivLU<Eigen::MatrixXd> lu(A_matrix);
+    if (!lu.isInvertible()) {
+        std::cerr << "Error: Circuit matrix is singular (check for voltage source loops or floating parts)." << std::endl;
+        return {};
     }
 
-    solution_vector = A_matrix.lu().solve(b_vector);
-//    std::cout << "MNA System solved." << std::endl;
+    solution_vector = lu.solve(b_vector);
     return solution_vector;
 }
 
-// Display methods
 void MNASolver::displayMatrix() const {
     std::cout << "\n--- MNA Matrix (A) ---" << std::endl;
     std::cout << A_matrix << std::endl;
@@ -72,134 +115,4 @@ void MNASolver::displayMatrix() const {
 void MNASolver::displaySolution() const {
     std::cout << "\n--- Solution Vector (x) ---" << std::endl;
     std::cout << solution_vector.transpose() << std::endl;
-}
-
-void MNASolver::displayNodeVoltages() const {
-    std::cout << "\n--- Node Voltages ---" << std::endl;
-    std::cout << "Node 0 (GND): 0.000000 V" << std::endl;
-
-    for (const auto& pair : node_id_to_matrix_idx) {
-        int node_id = pair.first;
-        int matrix_idx = pair.second;
-
-        if (matrix_idx < num_non_ground_nodes) {
-            std::cout.precision(6);
-            std::cout << std::fixed;
-            std::cout << "Node " << node_id << " (V_" << node_id << "): "
-                      << solution_vector(matrix_idx) << " V" << std::endl;
-        }
-    }
-}
-void MNASolver::initializeMatrix(const Graph& circuitGraph) {
-    // 1. Identify all unique non-ground nodes from the graph.
-    std::set<int> unique_node_ids;
-    const std::vector<Node*>& all_nodes_in_graph = circuitGraph.getNodes();
-    for (Node* node_ptr : all_nodes_in_graph) {
-        if (node_ptr->getId() != 0) {
-            unique_node_ids.insert(node_ptr->getId());
-        }
-    }
-
-    // 2. Check for the existence of a ground node (ID 0). This is critical.
-    bool has_ground_node = false;
-
-    if (all_nodes_in_graph.empty()) {
-        const auto& elems = circuitGraph.getElements();
-        for (Element* e : elems) {
-            if (!e) continue;
-            if (e->node1 == 0 || e->node2 == 0) has_ground_node = true;
-            if (e->node1 != 0) unique_node_ids.insert(e->node1);
-            if (e->node2 != 0) unique_node_ids.insert(e->node2);
-        }
-    } else {
-        for (Node* n : all_nodes_in_graph) {
-            if (!n) continue;
-            if (n->getId() == 0) has_ground_node = true;
-            else unique_node_ids.insert(n->getId());
-        }
-    }
-
-    if (!has_ground_node) {
-        std::cerr << "Error: No ground node (ID 0) detected in the circuit.\n";
-        total_unknowns = 0;
-        A_matrix.resize(0,0);
-        b_vector.resize(0);
-        node_id_to_matrix_idx.clear();
-        num_non_ground_nodes = 0;
-        return;
-    }
-
-
-
-    // 3. Create a sorted map from node ID to its corresponding matrix index (0, 1, 2, ...).
-    std::vector<int> sorted_non_ground_node_ids(unique_node_ids.begin(), unique_node_ids.end());
-    std::sort(sorted_non_ground_node_ids.begin(), sorted_non_ground_node_ids.end());
-
-    num_non_ground_nodes = sorted_non_ground_node_ids.size();
-    node_id_to_matrix_idx.clear();
-    for (int i = 0; i < num_non_ground_nodes; ++i) {
-        node_id_to_matrix_idx[sorted_non_ground_node_ids[i]] = i;
-    }
-
-    // 4. Link current-controlled sources to their controlling voltage source.
-
-    // This step is necessary before counting extra variables.
-    const std::vector<Element*>& all_elements = circuitGraph.getElements();
-
-
-
-    int num_extra_vars = 0;
-    for (Element* elem : all_elements) {
-        if (elem->introducesExtraVariable) {
-            elem->extraVariableIndex = num_extra_vars++;
-        }
-    }
-
-
-    for (Element* e : all_elements) {
-        if (e->type == CCCS) {
-            dynamic_cast<cccs*>(e)->linkControlSource(all_elements);
-        } else if (e->type == CCVS) {
-            dynamic_cast<ccvs*>(e)->linkControlSource(all_elements);
-        }
-    }
-
-    // 5. Count ALL elements that introduce an extra variable (V, L, VCVS, CCVS, etc.)
-    // and assign them their index in the 'extra variables' section of the matrix.
-
-    // 6. Calculate the total size of the MNA matrix.
-    total_unknowns = num_non_ground_nodes + num_extra_vars;
-
-    // Final sanity check
-    if (total_unknowns == 0 && !all_nodes_in_graph.empty()) {
-        std::cerr << "Error: No non-ground nodes or extra variables. Circuit might not be solvable." << std::endl;
-        return;
-    }
-
-    // 7. Resize matrices to the correct dimensions and initialize with zeros.
-    A_matrix.resize(total_unknowns, total_unknowns);
-    b_vector.resize(total_unknowns);
-    A_matrix.setZero();
-    b_vector.setZero();
-
-    std::cerr << "[init] nodes(non-ground): " << unique_node_ids.size()
-              << ", total_unknowns: " << total_unknowns << "\n";
-
-}
-void MNASolver::displayElementCurrents(const Graph& circuitGraph) const {
-    std::cout << "\n--- Element Currents (from extra variables) ---" << std::endl;
-    int extra_var_start_idx = getExtraVariableStartIndex();
-
-    const std::vector<Element*>& all_elements_in_graph = circuitGraph.getElements();
-    for (Element* elem_ptr : all_elements_in_graph) {
-        if (elem_ptr->introducesExtraVariable) {
-            int current_idx_in_solution = extra_var_start_idx + elem_ptr->extraVariableIndex;
-            if (current_idx_in_solution < solution_vector.size()) {
-                std::cout.precision(6);
-                std::cout << std::fixed;
-                std::cout << "Current through " << elem_ptr->name << " (I_" << elem_ptr->name << "): "
-                          << solution_vector(current_idx_in_solution) << " A" << std::endl;
-            }
-        }
-    }
 }

@@ -38,11 +38,14 @@ std::vector<std::pair<double,double>> Signal::readAllAsPoints() {
     if (!open()) return pts;
 
     double t = 0.0;
-    while (readNextChunk() && t <= tStop) {
+    while (t <= tStop && readNextChunk()) {
         appendCurrentChunkAsPoints(pts, t);
         t += currentChunk.size() / Fs;
     }
     close();
+
+    // the last chunk can go past tStop
+    while (!pts.empty() && pts.back().first > tStop) pts.pop_back();
     return pts;
 }
 

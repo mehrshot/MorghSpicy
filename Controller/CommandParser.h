@@ -5,81 +5,62 @@
 
 #include <string>
 #include <sstream>
+#include <vector>
+#include <functional>
+#include <optional>
+#include <filesystem>
 #include "Model/Graph.h"
 #include "Model/NodeManager.h"
 #include "Controller/SimulationRunner.h"
-#include <functional>
-#include <optional>
-
-class Graph;
-class NodeManager;
-class SimulationRunner;
-
-struct SimSettingsAC {
-    ACSweepKind kind;
-    double w_start;
-    double w_stop;
-    int points;
-};
-
-struct SimSettingsPhase {
-    double w_base;
-    double phi_start;
-    double phi_stop;
-    int points;
-};
-
 
 class CommandParser {
 private:
-    Graph* graph;
-    NodeManager* nodeManager;
-    SimulationRunner* simRunner;
+    Graph* graph = nullptr;
+    NodeManager* nodeManager = nullptr;
+    SimulationRunner* simRunner = nullptr;
 
+    // settings used by "plot v ..." / "plot i ..." (change them with the "tran" command)
+    double tranStep = 1e-5;
+    double tranStop = 5e-2;
+    double tranMax = 0.0;
+
+    // files from the last "show existing schematics", so "load 2" works
+    std::vector<std::filesystem::path> lastSchematics;
+
+    void handleAdd(std::istringstream& iss);
     void handlePrintCommand(std::istringstream& iss);
     void handleShowSchematics();
+    void handleLoad(std::istringstream& iss);
     void handleSaveCommand(std::istringstream& iss);
-    void handleAddComponent(const std::string& sub_name, const std::string& external_n1_str, const std::string& external_n2_str);
-
-    void cmd_scope_load(const std::vector<std::string>& tokens);
-    void cmd_scope_clear();
-
-    // helpers
-    int nodeFromToken(const std::string& tok); // delegates to nm->resolveId
+    void handleSubcircuitCreate(std::istringstream& iss);
+    void handleAddComponent(const std::string& instance_name, const std::string& sub_name,
+                            const std::string& external_n1_str, const std::string& external_n2_str);
     void handleLabel(std::istringstream& in);
     void handleConnect(std::istringstream& in);
+    void handlePlot(std::istringstream& in);
+    void handleTranSettings(std::istringstream& in);
+    void handleAC(std::istringstream& iss, bool print);
+    void handlePhase(std::istringstream& iss, bool print);
+    void handleValue(std::istringstream& iss);
+    void handleScope(const std::vector<std::string>& parts);
+    void printHelp() const;
+
+    std::vector<OutputVariable> readOutputs(std::istringstream& iss) const;
+    void emit(const PlotData& pd, bool printTable);
+    std::string nodeName(int id) const;
 
 public:
-
-    CommandParser();  // <- DECLARE default ctor (you define it in .cpp)
-
+    CommandParser() = default;
     CommandParser(Graph* g, NodeManager* n, SimulationRunner* r);
 
-    // Optional callbacks for scope->App bridge (set these in App if you want)
+    // callbacks to the GUI (App sets them, the CLI leaves them empty)
     std::function<void(const std::string& path, double Fs, double tStop, int chunk)> onScopeLoad;
     std::function<void()> onScopeClear;
+    std::function<void(const PlotData&)> onPlotData;
 
-    // --- Plot callbacks (bridge to App/Simulation) ---
-    std::function<void(int n_pos, int n_neg)> onPlotVoltageNodes;     // V(n_pos) - V(n_neg or GND)
-    std::function<void(const std::string& element)> onPlotCurrentElement; // I(element)
-    std::function<void(const std::string& element)> onPlotPowerElement;   // P(element)
-
-    std::function<void(const PlotData&)> onPlotData;\
-
-
-    // New wrapper that adds 'scope' commands then falls back to your legacy parser
     void parseCommand(const std::string& line);
 
-    void parseCommandCore(const std::string& line);
-
-    void handleAC(std::istringstream& iss);
-    void handlePhase(std::istringstream& iss);
-
-    void handleValue(std::istringstream& iss);
-
     static std::optional<double> parseValueWithPrefix(const std::string& str);
-
-
 };
 
 #endif // COMMANDPARSER_H

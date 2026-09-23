@@ -1,475 +1,464 @@
 #include "SimulationRunner.h"
-#include "Model/MNASolver.h"
-#include "Model/NodeManager.h"
 #include "Model/Elements.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>
-#include <functional>
 
 using cplx = std::complex<double>;
-static inline cplx j() { return cplx(0.0, 1.0); }
 
-// Constants for the Newton-Raphson iterative solver
+// newton-raphson settings (only matters when there is a diode)
 const int MAX_NR_ITERATIONS = 100;
 const double NR_TOLERANCE = 1e-6;
+
+// h this big turns capacitors into open and inductors into short circuits
+const double DC_TIMESTEP = 1e12;
 
 SimulationRunner::SimulationRunner(Graph* g, MNASolver* solver, NodeManager* n)
         : graph(g), mnaSolver(solver), nm(n) {}
 
-PlotData SimulationRunner::runTransient(double tstep_initial, double tstop, double tmaxstep, const std::vector<OutputVariable>& requested_vars) {
-    PlotData plotData;
-    mnaSolver->initializeMatrix(*graph);
-    if (mnaSolver->getTotalUnknowns() == 0) {
-        std::cerr << "[ABORT] No solvable MNA system (likely missing/isolated GND or no connections).\n";
-        return plotData;
-    }
-
+bool SimulationRunner::prepare() {
+    // wires and GND only change the node manager, so fix the element nodes first
     graph->canonicalizeNodes(*nm);
+    if (!mnaSolver->initializeMatrix(*graph)) return false;
 
-    nm->displayNodes();
-    for (auto& e : graph->elements) {        // adjust if accessor differs
-        const Element* el = e;         // or `e` if you store raw pointers
-        std::cout << el->name << ": (" << el->node1 << ", " << el->node2 << ")\n";
-    }
-
-
-    mnaSolver->initializeMatrix(*graph);
-
-    // Initial sanity checks
-    if (mnaSolver->getTotalUnknowns() == 0 || !graph->isConnected()) {
-        std::cerr << "[WARN] Pre-check failed; attempting transient-only with gmin.\n";
-        // DO NOT return; let the code proceed to build the transient MNA and step
-    }
-
-    // --- Optimization: Pre-resolve output variable getters ---
-    // Instead of searching for nodes/elements by name inside the loop,
-    // we create a vector of functions that directly access the results.
-    std::vector<std::function<double(const Eigen::VectorXd&, const Eigen::VectorXd&, double)>> value_getters;
-    for (const auto& var : requested_vars) {
-        plotData.series_names.push_back((var.type == OutputVariable::VOLTAGE ? "V(" : "I(") + var.name + ")");
-        plotData.data_series.emplace_back();
-
-        if (var.type == OutputVariable::VOLTAGE) {
-            int node_id = nm->resolveId(var.name);
-            if (node_id != -1 && mnaSolver->getNodeToMatrixIdxMap().count(node_id)) {
-                int matrix_idx = mnaSolver->getNodeToMatrixIdxMap().at(node_id);
-                value_getters.push_back([matrix_idx](const Eigen::VectorXd& sol, const Eigen::VectorXd&, double) {
-                    return sol(matrix_idx);
-                });
-            } else {
-                value_getters.push_back([](const Eigen::VectorXd&, const Eigen::VectorXd&, double) { return 0.0; }); // Placeholder
-            }
-        } else { // CURRENT
-            Element* elem = graph->findElement(var.name);
-            if (elem) {
-                value_getters.push_back([this, elem](const Eigen::VectorXd& sol, const Eigen::VectorXd& prev_sol, double h) {
-                    return this->calculate_element_current(elem, sol, prev_sol, h);
-                });
-            } else {
-                value_getters.push_back([](const Eigen::VectorXd&, const Eigen::VectorXd&, double) { return 0.0; }); // Placeholder
-            }
-        }
-    }
-
-    Eigen::VectorXd prev_solution(mnaSolver->getTotalUnknowns());
-    prev_solution.setZero();
-
-    // --- Optimization: Pre-allocate vector memory ---
-    size_t estimated_steps = static_cast<size_t>(tstop / tstep_initial) + 100;
-    plotData.time_axis.reserve(estimated_steps);
-    for(auto& series : plotData.data_series) {
-        series.reserve(estimated_steps);
-    }
-
-    double time = 0.0;
-    double h = tstep_initial;
-
-    // Store initial conditions at t=0
-    plotData.time_axis.push_back(time);
-    for(auto& series : plotData.data_series) {
-        series.push_back(0.0);
-    }
-
-    // --- Main simulation loop ---
-    while (time < tstop) {
-        if (time + h > tstop) { h = tstop - time; }
-        if (h > tmaxstep) { h = tmaxstep; }
-
-        // Update time-dependent sources
-        graph->updateTimeDependentSources(time + h);
-
-        mnaSolver->constructMNAMatrix(*graph, h, prev_solution);
-        Eigen::VectorXd final_solution = mnaSolver->solve();
-
-        if (final_solution.size() == 0) {
-            std::cerr << "Error: Solver failed at time " << time << ". Aborting." << std::endl;
-            break;
-        }
-
-        time += h;
-
-        // Store results
-        plotData.time_axis.push_back(time);
-        for (size_t i = 0; i < value_getters.size(); ++i) {
-            double result = value_getters[i](final_solution, prev_solution, h);
-            plotData.data_series[i].push_back(result);
-        }
-
-        prev_solution = final_solution;
-
-        // Note: Variable time-stepping logic (LTE) could be re-implemented here for adaptive step control.
-    }
-
-    return plotData;
-}
-void SimulationRunner::runDCSweep(const std::string& sourceName, double start, double stop, double increment, const std::vector<OutputVariable>& requested_vars) {
-    mnaSolver->initializeMatrix(*graph);
-
-    graph->canonicalizeNodes(*nm);
-    mnaSolver->initializeMatrix(*graph);
-
-
-    if (mnaSolver->getTotalUnknowns() == 0) {
-        std::cerr << "Error: Simulation cannot run, the circuit is not correctly defined." << std::endl;
-        return;
-    }
     if (!graph->isConnected()) {
-        std::cerr << "Error: Circuit is disconnected or contains floating nodes." << std::endl;
-        return;
+        std::cerr << "Warning: some parts of the circuit are not connected to ground, their voltages are meaningless." << std::endl;
     }
 
-    Element* swept_element = graph->findElement(sourceName);
-    if (!swept_element) {
-        std::cerr << "Error: Source '" << sourceName << "' not found for DC sweep." << std::endl;
-        return;
+    hasNonlinear = false;
+    for (Element* e : graph->getElements()) {
+        if (e->isNonlinear()) hasNonlinear = true;
     }
-
-    std::cout << "Running DC Sweep Analysis..." << std::endl;
-
-    std::cout << std::left << std::setw(15) << sourceName;
-    for (const auto& var : requested_vars) {
-        std::string header = (var.type == OutputVariable::VOLTAGE ? "V(" : "I(") + var.name + ")";
-        std::cout << std::setw(15) << header;
-    }
-    std::cout << std::endl;
-
-    Eigen::VectorXd current_guess(mnaSolver->getTotalUnknowns());
-    current_guess.setZero();
-    double large_timestep_for_dc = 1e12; // To simulate DC conditions
-
-    // Main DC sweep loop
-    for (double current_val = start; current_val <= stop; current_val += increment) {
-        swept_element->setValue(current_val);
-        Eigen::VectorXd final_solution;
-        bool converged = false;
-
-        // Newton-Raphson inner loop for each sweep step
-        for (int nr_iter = 0; nr_iter < MAX_NR_ITERATIONS; ++nr_iter) {
-            mnaSolver->constructMNAMatrix(*graph, large_timestep_for_dc, current_guess);
-            final_solution = mnaSolver->solve();
-
-            if (final_solution.size() == 0) break; // Solver failed
-
-            Eigen::VectorXd diff = final_solution - current_guess;
-            if (diff.norm() < NR_TOLERANCE) {
-                converged = true;
-                break;
-            }
-            current_guess = final_solution;
-        }
-
-        if (!converged) {
-            std::cerr << "Warning: Newton-Raphson failed to converge for " << sourceName << " = " << current_val << "." << std::endl;
-        }
-
-        // Print results for the current sweep step
-        std::cout << std::left << std::fixed << std::setprecision(6);
-        std::cout << std::setw(15) << current_val;
-        for (const auto& var : requested_vars) {
-            double result = 0.0;
-            if (var.type == OutputVariable::VOLTAGE) {
-                int node_id = -1;
-                for(const auto& node : graph->getNodes()){ if(node->getName() == var.name){ node_id = node->getId(); break; } }
-                if (node_id != -1 && mnaSolver->getNodeToMatrixIdxMap().count(node_id)) {
-                    result = final_solution(mnaSolver->getNodeToMatrixIdxMap().at(node_id));
-                }
-            } else { // CURRENT
-                Element* elem = graph->findElement(var.name);
-                if (elem) {
-                    result = calculate_element_current(elem, final_solution, current_guess, large_timestep_for_dc);
-                }
-            }
-            std::cout << std::setw(15) << result;
-        }
-        std::cout << std::endl;
-
-        current_guess = final_solution; // Use as initial guess for next sweep step
-    }
+    return true;
 }
 
-// This helper function calculates element currents based on the final solution
-double SimulationRunner::calculate_element_current(Element* elem, const Eigen::VectorXd& solution_vector, const Eigen::VectorXd& prev_solution, double h) {
+bool SimulationRunner::checkOutputs(const std::vector<OutputVariable>& vars) const {
+    for (const auto& v : vars) {
+        if (v.type == OutputVariable::VOLTAGE) {
+            if (!nm->findId(v.name)) {
+                std::cerr << "Error: Node " << v.name << " not found in circuit" << std::endl;
+                return false;
+            }
+        } else if (!graph->findElement(v.name)) {
+            std::cerr << "Error: Component " << v.name << " not found in circuit" << std::endl;
+            return false;
+        }
+    }
+    return true;
+}
+
+// solves one time point. x comes in as the first guess and goes out as the answer
+bool SimulationRunner::solvePoint(double h, const Eigen::VectorXd& prev, Eigen::VectorXd& x) {
+    Eigen::VectorXd guess = x;
+    for (int it = 0; it < MAX_NR_ITERATIONS; ++it) {
+        mnaSolver->constructMNAMatrix(*graph, h, prev, guess);
+        Eigen::VectorXd sol = mnaSolver->solve();
+        if (sol.size() == 0) return false;
+
+        if (!hasNonlinear || (sol - guess).norm() < NR_TOLERANCE * (1.0 + sol.norm())) {
+            x = sol;
+            return true;
+        }
+        guess = sol;
+    }
+    std::cerr << "Warning: Newton-Raphson did not converge, using the last iteration." << std::endl;
+    x = guess;
+    return true;
+}
+
+double SimulationRunner::nodeVoltage(const Eigen::VectorXd& x, int node_id) const {
+    if (node_id == 0) return 0.0;
+    const auto& m = mnaSolver->getNodeToMatrixIdxMap();
+    auto it = m.find(node_id);
+    if (it == m.end() || it->second >= x.size()) return 0.0;
+    return x(it->second);
+}
+
+double SimulationRunner::calculate_element_current(Element* elem, const Eigen::VectorXd& x,
+                                                   const Eigen::VectorXd& prev, double h) const {
     if (!elem) return 0.0;
 
     if (elem->introducesExtraVariable) {
-        int extra_var_idx = mnaSolver->getExtraVariableStartIndex() + elem->extraVariableIndex;
-        return solution_vector(extra_var_idx);
+        int k = mnaSolver->getExtraVariableStartIndex() + elem->extraVariableIndex;
+        return k < x.size() ? x(k) : 0.0;
     }
 
-    const auto& node_map = mnaSolver->getNodeToMatrixIdxMap();
-    int n1_id = elem->node1;
-    int n2_id = elem->node2;
-
-    double v1 = (n1_id == 0) ? 0.0 : solution_vector(node_map.at(n1_id));
-    double v2 = (n2_id == 0) ? 0.0 : solution_vector(node_map.at(n2_id));
+    double v1 = nodeVoltage(x, elem->node1);
+    double v2 = nodeVoltage(x, elem->node2);
 
     switch (elem->type) {
         case RESISTOR:
             return (v1 - v2) / elem->value;
         case CAPACITOR: {
-            if (h >= 1e12) return 0.0; // No current through capacitor in DC
-            double prev_v1 = (n1_id == 0) ? 0.0 : prev_solution(node_map.at(n1_id));
-            double prev_v2 = (n2_id == 0) ? 0.0 : prev_solution(node_map.at(n2_id));
-            return elem->value * ((v1 - v2) - (prev_v1 - prev_v2)) / h;
+            if (h >= DC_TIMESTEP || prev.size() == 0) return 0.0;
+            double pv = nodeVoltage(prev, elem->node1) - nodeVoltage(prev, elem->node2);
+            return elem->value * ((v1 - v2) - pv) / h;
         }
         case CURRENT_SOURCE:
             return elem->value;
-        case DIODE: {
-            // For a diode, we re-calculate the current using the final converged voltage
-            auto* diode = static_cast<Diode*>(elem);
-            double vd = v1 - v2;
-            if (diode->model == "Z" && vd < -diode->Vz) {
-                return (vd - (-diode->Vz)) / 1.0; // Current in Zener breakdown
-            } else {
-                return diode->Is * (std::exp(vd / (diode->n * diode->Vt)) - 1.0);
-            }
+        case DIODE:
+            return static_cast<Diode*>(elem)->currentAt(v1 - v2);
+        case VCCS: {
+            auto* g = static_cast<vccs*>(elem);
+            return g->value * (nodeVoltage(x, g->controlPos()) - nodeVoltage(x, g->controlNeg()));
+        }
+        case CCCS: {
+            auto* f = static_cast<cccs*>(elem);
+            if (!f->controlElement()) return 0.0;
+            return f->value * calculate_element_current(f->controlElement(), x, prev, h);
         }
         default:
             return 0.0;
     }
 }
 
+double SimulationRunner::valueOf(const OutputVariable& v, const Eigen::VectorXd& x,
+                                 const Eigen::VectorXd& prev, double h) const {
+    if (v.type == OutputVariable::VOLTAGE) {
+        auto id = nm->findId(v.name);
+        return id ? nodeVoltage(x, *id) : 0.0;
+    }
+    return calculate_element_current(graph->findElement(v.name), x, prev, h);
+}
+
+void SimulationRunner::startPlot(PlotData& pd, const std::vector<OutputVariable>& vars) {
+    pd.data_series.assign(vars.size(), {});
+    pd.series_names.clear();
+    for (const auto& v : vars) {
+        pd.series_names.push_back((v.type == OutputVariable::VOLTAGE ? "V(" : "I(") + v.name + ")");
+    }
+}
+
+PlotData SimulationRunner::runTransient(double tstep, double tstop, double tmaxstep,
+                                        const std::vector<OutputVariable>& vars) {
+    PlotData plotData;
+    if (tstep <= 0 || tstop <= 0) {
+        std::cerr << "Error: Invalid time parameters for TRAN analysis." << std::endl;
+        return plotData;
+    }
+    if (!prepare() || !checkOutputs(vars)) return plotData;
+    startPlot(plotData, vars);
+
+    double h = tstep;
+    if (tmaxstep > 0 && h > tmaxstep) h = tmaxstep;
+
+    // everything starts from zero (capacitors empty, inductors without current)
+    Eigen::VectorXd prev = Eigen::VectorXd::Zero(mnaSolver->getTotalUnknowns());
+    Eigen::VectorXd x = prev;
+
+    size_t steps = static_cast<size_t>(std::ceil(tstop / h - 1e-9));
+    plotData.time_axis.reserve(steps + 1);
+    for (auto& s : plotData.data_series) s.reserve(steps + 1);
+
+    double time = 0.0;
+    for (size_t i = 1; i <= steps; ++i) {
+        double t_next = std::min(i * h, tstop);
+        double dt = t_next - time;
+
+        graph->updateTimeDependentSources(t_next);
+        if (!solvePoint(dt, prev, x)) {
+            std::cerr << "Error: Solver failed at time " << time << ". Aborting." << std::endl;
+            break;
+        }
+        time = t_next;
+
+        plotData.time_axis.push_back(time);
+        for (size_t k = 0; k < vars.size(); ++k) {
+            plotData.data_series[k].push_back(valueOf(vars[k], x, prev, dt));
+        }
+        prev = x;
+    }
+
+    graph->updateTimeDependentSources(0.0);
+    return plotData;
+}
+
+PlotData SimulationRunner::runDCSweep(const std::string& sourceName, double start, double stop, double increment,
+                                      const std::vector<OutputVariable>& vars) {
+    PlotData plotData;
+    Element* swept = graph->findElement(sourceName);
+    if (!swept) {
+        std::cerr << "Error: Source '" << sourceName << "' not found for DC sweep." << std::endl;
+        return plotData;
+    }
+    if (swept->type != VOLTAGE_SOURCE && swept->type != CURRENT_SOURCE) {
+        std::cerr << "Error: DC sweep only works on independent sources (V or I)." << std::endl;
+        return plotData;
+    }
+    if (increment <= 0 || stop < start) {
+        std::cerr << "Error: Bad DC sweep range." << std::endl;
+        return plotData;
+    }
+    if (!prepare() || !checkOutputs(vars)) return plotData;
+
+    startPlot(plotData, vars);
+    plotData.x_label = sourceName;
+
+    const double saved = swept->value;
+    Eigen::VectorXd x = Eigen::VectorXd::Zero(mnaSolver->getTotalUnknowns());
+
+    // counting steps with an int so the last point isn't lost to rounding
+    int n = static_cast<int>(std::floor((stop - start) / increment + 1e-9)) + 1;
+    for (int i = 0; i < n; ++i) {
+        double val = start + i * increment;
+        swept->setValue(val);
+
+        Eigen::VectorXd prev = x;
+        if (!solvePoint(DC_TIMESTEP, prev, x)) {
+            std::cerr << "Error: Solver failed at " << sourceName << " = " << val << std::endl;
+            break;
+        }
+
+        plotData.time_axis.push_back(val);
+        for (size_t k = 0; k < vars.size(); ++k) {
+            plotData.data_series[k].push_back(valueOf(vars[k], x, prev, DC_TIMESTEP));
+        }
+    }
+
+    swept->setValue(saved);
+    return plotData;
+}
+
 std::vector<double> SimulationRunner::makeACGrid(ACSweepKind kind, double w_start, double w_stop, int points) const {
     std::vector<double> w;
+    if (points <= 1) { w.push_back(w_start); return w; }
     w.reserve(points);
+
     if (kind == ACSweepKind::Linear) {
-        if (points <= 1) { w.push_back(w_start); return w; }
         double step = (w_stop - w_start) / double(points - 1);
         for (int i = 0; i < points; ++i) w.push_back(w_start + i * step);
     } else {
+        // equally spaced on a log scale (base doesn't really matter here, but keep it for clarity)
         double base = (kind == ACSweepKind::Decade) ? 10.0 : 2.0;
         double a = std::log(w_start) / std::log(base);
         double b = std::log(w_stop) / std::log(base);
-        if (points <= 1) { w.push_back(w_start); return w; }
         double step = (b - a) / double(points - 1);
         for (int i = 0; i < points; ++i) w.push_back(std::pow(base, a + i * step));
     }
     return w;
 }
 
-Eigen::VectorXcd SimulationRunner::solveACOnce(double w) const {
-    const auto& elems = graph->getElements();
-    std::unordered_map<int,int> node2idx;
-    std::vector<int> nodeIds;
-    nodeIds.reserve(graph->getNodes().size());
-    for (auto* n : graph->getNodes()) {
-        for (auto* n : graph->getNodes()) {
-            const int nid = n->getId();
-            if (nid != 0) {                       // ground node is id==0 in your codebase
-                node2idx[nid] = (int)nodeIds.size();
-                nodeIds.push_back(nid);
-            }
-        }
-    }
-    int n = int(nodeIds.size());
+// phasor analysis at one angular frequency. uses the same row numbering as the transient
+// solver so we can reuse its node map. sinusoidal sources are the AC inputs, DC sources are zeroed.
+Eigen::VectorXcd SimulationRunner::solveACOnce(double w, const Element* phaseSrc, double phaseDeg) const {
+    const int N = mnaSolver->getTotalUnknowns();
+    const int ext = mnaSolver->getExtraVariableStartIndex();
+    const auto& nodeMap = mnaSolver->getNodeToMatrixIdxMap();
+    const cplx jw(0.0, w);
 
-    int m = 0;
-    for (auto* e : elems) {
-        if (e->type == ElementType::VOLTAGE_SOURCE || e->type == ElementType::VCVS || e->type == ElementType::CCVS) ++m;
-    }
+    Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(N, N);
+    Eigen::VectorXcd b = Eigen::VectorXcd::Zero(N);
 
-    Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(n + m, n + m);
-    Eigen::VectorXcd b = Eigen::VectorXcd::Zero(n + m);
-
-    auto rowOf = [&](int node)->int{
-        auto it = node2idx.find(node);
-        return it==node2idx.end()? -1 : it->second;
+    auto rowOf = [&](int node) -> int {
+        if (node == 0) return -1;
+        auto it = nodeMap.find(node);
+        return it == nodeMap.end() ? -1 : it->second;
+    };
+    auto admittance = [&](int r1, int r2, cplx Y) {
+        if (r1 != -1) A(r1, r1) += Y;
+        if (r2 != -1) A(r2, r2) += Y;
+        if (r1 != -1 && r2 != -1) { A(r1, r2) -= Y; A(r2, r1) -= Y; }
+    };
+    auto branch = [&](int r1, int r2, int k) {
+        if (r1 != -1) { A(r1, k) += 1.0; A(k, r1) += 1.0; }
+        if (r2 != -1) { A(r2, k) -= 1.0; A(k, r2) -= 1.0; }
     };
 
-    int extra = n;
-    auto takeExtra = [&](){ return extra++; };
-
-    for (auto* e : elems) {
+    for (Element* e : graph->getElements()) {
         int r1 = rowOf(e->node1);
         int r2 = rowOf(e->node2);
+        int k = e->introducesExtraVariable ? ext + e->extraVariableIndex : -1;
 
         switch (e->type) {
-            case ElementType::RESISTOR: {
-                double R = e->value;
-                cplx Y = 1.0 / R;
-                if (r1!=-1) A(r1,r1) += Y;
-                if (r2!=-1) A(r2,r2) += Y;
-                if (r1!=-1 && r2!=-1) { A(r1,r2) -= Y; A(r2,r1) -= Y; }
-            } break;
-
-            case ElementType::CAPACITOR: {
-                double C = e->value;
-                cplx Y = j()*w*C;
-                if (r1!=-1) A(r1,r1) += Y;
-                if (r2!=-1) A(r2,r2) += Y;
-                if (r1!=-1 && r2!=-1) { A(r1,r2) -= Y; A(r2,r1) -= Y; }
-            } break;
-
-            case ElementType::INDUCTOR: {
-                double L = e->value;
-                cplx Y = 1.0 / (j()*w*L);
-                if (r1!=-1) A(r1,r1) += Y;
-                if (r2!=-1) A(r2,r2) += Y;
-                if (r1!=-1 && r2!=-1) { A(r1,r2) -= Y; A(r2,r1) -= Y; }
-            } break;
-
-            case ElementType::CURRENT_SOURCE: {
-                double I = e->value;
-                if (r1!=-1) b(r1) -= I;
-                if (r2!=-1) b(r2) += I;
-            } break;
-
-            case ElementType::VOLTAGE_SOURCE:
-            case ElementType::VCVS:
-            case ElementType::CCVS: {
-                int k = takeExtra();
-                if (r1!=-1) { A(r1,k) += 1.0; A(k,r1) += 1.0; }
-                if (r2!=-1) { A(r2,k) -= 1.0; A(k,r2) -= 1.0; }
-                if (e->type == ElementType::VOLTAGE_SOURCE) {
-                    b(k) += e->value;
-                } else if (e->type == ElementType::VCVS) {
-                    auto* v = static_cast<vcvs*>(e);
-                    int rc1 = rowOf(v->controlPos());
-                    int rc2 = rowOf(v->controlNeg());
-                    double mu = v->getValue();
-                    if (rc1!=-1) A(k,rc1) -= mu;
-                    if (rc2!=-1) A(k,rc2) += mu;
-                } else {
-                    auto* v = static_cast<ccvs*>(e);
-                    double r = v->getValue();
-                    if (v->extraVariableIndex >= 0) {
-                        int kc = n + v->extraVariableIndex;
-                        A(k,kc) -= r;
-                    }
-                }
-            } break;
-
-            case ElementType::DIODE:
-            case ElementType::VCCS:
-            case ElementType::CCCS:
-            case ElementType::SINUSOIDAL_SOURCE:
-            case ElementType::PULSE_SOURCE:
+            case RESISTOR:
+                admittance(r1, r2, 1.0 / e->value);
+                break;
+            case CAPACITOR:
+                admittance(r1, r2, jw * e->value);
+                break;
+            case INDUCTOR:
+                branch(r1, r2, k);
+                A(k, k) -= jw * e->value;
+                break;
+            case VOLTAGE_SOURCE:
+            case PULSE_SOURCE:
+                branch(r1, r2, k);   // zero volts in AC -> short
+                break;
+            case SINUSOIDAL_SOURCE: {
+                auto* s = static_cast<SinusoidalSource*>(e);
+                double ph = (e == phaseSrc) ? phaseDeg : s->phaseDeg();
+                branch(r1, r2, k);
+                b(k) += std::polar(s->amplitude(), ph * std::numbers::pi / 180.0);
+                break;
+            }
+            case VCCS: {
+                auto* g = static_cast<vccs*>(e);
+                int c1 = rowOf(g->controlPos()), c2 = rowOf(g->controlNeg());
+                if (r1 != -1 && c1 != -1) A(r1, c1) += g->value;
+                if (r1 != -1 && c2 != -1) A(r1, c2) -= g->value;
+                if (r2 != -1 && c1 != -1) A(r2, c1) -= g->value;
+                if (r2 != -1 && c2 != -1) A(r2, c2) += g->value;
+                break;
+            }
+            case VCVS: {
+                auto* v = static_cast<vcvs*>(e);
+                int c1 = rowOf(v->controlPos()), c2 = rowOf(v->controlNeg());
+                branch(r1, r2, k);
+                if (c1 != -1) A(k, c1) -= v->value;
+                if (c2 != -1) A(k, c2) += v->value;
+                break;
+            }
+            case CCCS: {
+                auto* f = static_cast<cccs*>(e);
+                if (!f->controlElement()) break;
+                int kc = ext + f->controlElement()->extraVariableIndex;
+                if (r1 != -1) A(r1, kc) += f->value;
+                if (r2 != -1) A(r2, kc) -= f->value;
+                break;
+            }
+            case CCVS: {
+                auto* hsrc = static_cast<ccvs*>(e);
+                branch(r1, r2, k);
+                if (hsrc->controlElement()) A(k, ext + hsrc->controlElement()->extraVariableIndex) -= hsrc->value;
+                break;
+            }
+            case CURRENT_SOURCE:   // DC current source is open in AC
+            case DIODE:            // no small signal model for now, treated as open
             default:
                 break;
         }
     }
 
-    return A.fullPivLu().solve(b);
+    for (int i = 0; i < ext; ++i) A(i, i) += 1e-12;
+
+    Eigen::FullPivLU<Eigen::MatrixXcd> lu(A);
+    if (!lu.isInvertible()) return {};
+    return lu.solve(b);
 }
 
-std::complex<double> SimulationRunner::getPhasorAt(const OutputVariable& v,
-                                                   const Eigen::VectorXcd& x) const {
+std::complex<double> SimulationRunner::getPhasorAt(const OutputVariable& v, const Eigen::VectorXcd& x, double w) const {
+    const auto& nodeMap = mnaSolver->getNodeToMatrixIdxMap();
+    auto V = [&](int node) -> cplx {
+        auto it = nodeMap.find(node);
+        return (node == 0 || it == nodeMap.end()) ? cplx(0, 0) : x(it->second);
+    };
+
     if (v.type == OutputVariable::VOLTAGE) {
-        int id = nm->resolveId(v.name);
-        const auto& map = mnaSolver->getNodeToMatrixIdxMap();
-        auto it = map.find(id);
-        if (it == map.end()) return cplx(0,0);
-        int idx = it->second;
-        if (idx >= 0 && idx < x.size()) return x(idx);
-        return cplx(0,0);
+        auto id = nm->findId(v.name);
+        return id ? V(*id) : cplx(0, 0);
     }
-    return cplx(0,0);
+
+    Element* e = graph->findElement(v.name);
+    if (!e) return {0, 0};
+    const int ext = mnaSolver->getExtraVariableStartIndex();
+    if (e->introducesExtraVariable) return x(ext + e->extraVariableIndex);
+
+    switch (e->type) {
+        case RESISTOR:  return (V(e->node1) - V(e->node2)) / e->value;
+        case CAPACITOR: return cplx(0, w) * e->value * (V(e->node1) - V(e->node2));
+        case VCCS: {
+            auto* g = static_cast<vccs*>(e);
+            return g->value * (V(g->controlPos()) - V(g->controlNeg()));
+        }
+        case CCCS: {
+            auto* f = static_cast<cccs*>(e);
+            if (!f->controlElement()) return {0, 0};
+            return f->value * x(ext + f->controlElement()->extraVariableIndex);
+        }
+        default: return {0, 0};
+    }
 }
 
-PlotData SimulationRunner::runACSweep(const ACSweepSettings& s,
-                                      const std::vector<OutputVariable>& what) {
-    graph->canonicalizeNodes(*nm);
-    auto wgrid = makeACGrid(s.kind, s.w_start, s.w_stop, s.points);
-
+PlotData SimulationRunner::runACSweep(const ACSweepSettings& s, const std::vector<OutputVariable>& vars) {
     PlotData plot;
-    plot.time_axis.clear();
-    plot.data_series.assign(what.size(), {});
-    plot.series_names.clear();
-    plot.series_names.reserve(what.size());
-    for (const auto& ov : what) {
-        plot.series_names.push_back(ov.type == OutputVariable::VOLTAGE
-                                    ? "V(" + ov.name + ")"
-                                    : "I(" + ov.name + ")");
+    if (s.points < 1 || s.w_stop < s.w_start || (s.kind != ACSweepKind::Linear && s.w_start <= 0)) {
+        std::cerr << "Error: Bad AC sweep range (log sweeps need w_start > 0)." << std::endl;
+        return plot;
+    }
+    if (!prepare() || !checkOutputs(vars)) return plot;
+
+    bool hasSource = false;
+    for (Element* e : graph->getElements()) {
+        if (e->type == SINUSOIDAL_SOURCE) hasSource = true;
+    }
+    if (!hasSource) {
+        std::cerr << "Error: AC analysis needs at least one sinusoidal source (add S1 n1 n2 offset amp freq)." << std::endl;
+        return plot;
     }
 
-    for (double w : wgrid) {
+    startPlot(plot, vars);
+    plot.x_label = "w (rad/s)";
+    plot.log_x = (s.kind != ACSweepKind::Linear);
+
+    for (double w : makeACGrid(s.kind, s.w_start, s.w_stop, s.points)) {
         Eigen::VectorXcd x = solveACOnce(w);
+        if (x.size() == 0) {
+            std::cerr << "Error: AC matrix is singular at w = " << w << std::endl;
+            break;
+        }
         plot.time_axis.push_back(w);
-
-        for (size_t k = 0; k < what.size(); ++k) {
-            auto ph = getPhasorAt(what[k], x);
-            plot.data_series[k].push_back(std::abs(ph));
+        for (size_t k = 0; k < vars.size(); ++k) {
+            plot.data_series[k].push_back(std::abs(getPhasorAt(vars[k], x, w)));
         }
     }
     return plot;
 }
 
-
-PlotData SimulationRunner::runPhaseSweep(const PhaseSweepSettings& s,
-                                         const std::vector<OutputVariable>& what) {
-    graph->canonicalizeNodes(*nm);
-
-    std::vector<double> phis;
-    phis.reserve(std::max(1, s.points));
-    if (s.points <= 1) {
-        phis.push_back(s.phi_start);
-    } else {
-        double step = (s.phi_stop - s.phi_start) / double(s.points - 1);
-        for (int i = 0; i < s.points; ++i) phis.push_back(s.phi_start + i * step);
-    }
-
+PlotData SimulationRunner::runPhaseSweep(const PhaseSweepSettings& s, const std::vector<OutputVariable>& vars) {
     PlotData plot;
-    plot.time_axis.clear();
-    plot.data_series.assign(what.size(), {});
-    plot.series_names.clear();
-    plot.series_names.reserve(what.size());
-    for (const auto& ov : what) {
-        plot.series_names.push_back(ov.type == OutputVariable::VOLTAGE
-                                    ? "V(" + ov.name + ")"
-                                    : "I(" + ov.name + ")");
+    if (!prepare() || !checkOutputs(vars)) return plot;
+
+    Element* src = nullptr;
+    for (Element* e : graph->getElements()) {
+        if (e->type != SINUSOIDAL_SOURCE) continue;
+        if (s.source.empty() || e->name == s.source) { src = e; break; }
+    }
+    if (!src) {
+        std::cerr << "Error: Phase sweep needs a sinusoidal source"
+                  << (s.source.empty() ? "" : " named " + s.source) << "." << std::endl;
+        return plot;
     }
 
-    const auto& elems = graph->getElements();
-    for (double phi : phis) {
-        double savedV = 0.0;
-        for (auto* e : elems) {
-            if (e->type == ElementType::VOLTAGE_SOURCE) {
-                savedV = e->value;
-                // Set a unit-magnitude source with the requested phase (real part used in this model).
-                e->value = std::polar(1.0, phi).real();
-                break;
-            }
+    startPlot(plot, vars);
+    plot.x_label = "phase of " + src->name + " (deg)";
+
+    int n = std::max(1, s.points);
+    for (int i = 0; i < n; ++i) {
+        double phi = (n == 1) ? s.phi_start : s.phi_start + i * (s.phi_stop - s.phi_start) / double(n - 1);
+        Eigen::VectorXcd x = solveACOnce(s.w_base, src, phi);
+        if (x.size() == 0) {
+            std::cerr << "Error: AC matrix is singular." << std::endl;
+            break;
         }
-
-        Eigen::VectorXcd x = solveACOnce(s.w_base);
-
-        for (auto* e : elems) {
-            if (e->type == ElementType::VOLTAGE_SOURCE) { e->value = savedV; break; }
-        }
-
         plot.time_axis.push_back(phi);
-        for (size_t k = 0; k < what.size(); ++k) {
-            auto ph = getPhasorAt(what[k], x);
-            plot.data_series[k].push_back(std::abs(ph));
+        for (size_t k = 0; k < vars.size(); ++k) {
+            plot.data_series[k].push_back(std::abs(getPhasorAt(vars[k], x, s.w_base)));
         }
     }
-
     return plot;
 }
 
-void SimulationRunner::setElementValue(const std::string& name, double value) {
+bool SimulationRunner::setElementValue(const std::string& name, double value) {
     Element* e = graph->findElement(name);
-    if (e) e->value = value;
+    if (!e) return false;
+    e->setValue(value);
+    return true;
 }
 
+void SimulationRunner::printTable(const PlotData& pd, std::ostream& out) {
+    if (pd.empty()) return;
+    out << std::left << std::setw(15) << pd.x_label << ' ';
+    for (const auto& n : pd.series_names) out << std::setw(15) << n << ' ';
+    out << "\n";
+
+    std::ios oldState(nullptr);
+    oldState.copyfmt(out);
+    out << std::setprecision(6);
+    for (size_t i = 0; i < pd.time_axis.size(); ++i) {
+        out << std::setw(16) << pd.time_axis[i];
+        for (const auto& s : pd.data_series) out << std::setw(16) << (i < s.size() ? s[i] : 0.0);
+        out << "\n";
+    }
+    out.copyfmt(oldState);
+    out << std::flush;
+}

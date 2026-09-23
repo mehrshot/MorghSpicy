@@ -5,8 +5,6 @@
 #ifndef MORGHSPICY_SIGNAL_H
 #define MORGHSPICY_SIGNAL_H
 
-
-#pragma once
 #include <string>
 #include <fstream>
 #include <vector>
@@ -42,7 +40,5 @@ private:
     int chunkSize;  // samples per read
     std::vector<double> currentChunk;
 };
-
-
 
 #endif //MORGHSPICY_SIGNAL_H

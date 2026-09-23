@@ -3,217 +3,138 @@
 //
 
 #include "Elements.h"
-#include <cmath> // Required for std::exp used in Diode model
+#include <cmath>
 #include <iostream>
 
-// Helper function to get the matrix index for a given node ID.
-// Returns -1 for ground node.
-int get_matrix_idx(int node_id, const std::map<int, int>& node_id_to_matrix_idx) {
+// matrix row of a node, -1 for ground (or unknown node)
+static int get_matrix_idx(int node_id, const std::map<int, int>& node_id_to_matrix_idx) {
     if (node_id == 0) return -1;
-    if (node_id_to_matrix_idx.count(node_id)) {
-        return node_id_to_matrix_idx.at(node_id);
-    }
+    auto it = node_id_to_matrix_idx.find(node_id);
+    if (it != node_id_to_matrix_idx.end()) return it->second;
     std::cerr << "Warning: Node ID " << node_id << " not found in matrix indexing map." << std::endl;
     return -1;
 }
 
-void Resistor::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                        const std::map<int, int>& node_id_to_matrix_idx,
-                        int extra_var_start_idx,
-                        const Eigen::VectorXd& prev_solution,
-                        double h) {
-    if (A.rows() == 0 || A.cols() == 0) return;
+// conductance g between n1 and n2
+static void stampConductance(Eigen::MatrixXd& A, int n1, int n2, double g) {
+    if (n1 != -1) A(n1, n1) += g;
+    if (n2 != -1) A(n2, n2) += g;
+    if (n1 != -1 && n2 != -1) {
+        A(n1, n2) -= g;
+        A(n2, n1) -= g;
+    }
+}
 
+// the +1/-1 pattern every "voltage source like" element has (V, L, E, H, SIN, PULSE)
+static void stampBranch(Eigen::MatrixXd& A, int n1, int n2, int k) {
+    if (n1 != -1) { A(n1, k) += 1.0; A(k, n1) += 1.0; }
+    if (n2 != -1) { A(n2, k) -= 1.0; A(k, n2) -= 1.0; }
+}
+
+void Resistor::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) {
     if (value <= 0) {
         std::cerr << "Error: Resistor '" << name << "' has a non-positive value (" << value << "). Skipping stamp." << std::endl;
         return;
     }
-    double conductance = 1.0 / value;
-
-    int n1_idx = get_matrix_idx(node1, node_id_to_matrix_idx);
-    int n2_idx = get_matrix_idx(node2, node_id_to_matrix_idx);
-
-    if (n1_idx != -1) A(n1_idx, n1_idx) += conductance;
-    if (n2_idx != -1) A(n2_idx, n2_idx) += conductance;
-
-    if (n1_idx != -1 && n2_idx != -1) {
-        A(n1_idx, n2_idx) -= conductance;
-        A(n2_idx, n1_idx) -= conductance;
-    }
+    int n1_idx = get_matrix_idx(node1, info.nodeIdx);
+    int n2_idx = get_matrix_idx(node2, info.nodeIdx);
+    stampConductance(A, n1_idx, n2_idx, 1.0 / value);
 }
 
-void Capacitor::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                         const std::map<int, int>& node_id_to_matrix_idx,
-                         int extra_var_start_idx,
-                         const Eigen::VectorXd& prev_solution,
-                         double h) {
-    if (A.rows() == 0 || A.cols() == 0) return;
-
-    if (value <= 0) {
-        std::cerr << "Error: Capacitor '" << name << "' has a non-positive value (" << value << "). Skipping stamp." << std::endl;
+// backward euler: i = C/h * (v - v_prev)
+void Capacitor::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) {
+    if (value <= 0 || info.h <= 0) {
+        std::cerr << "Error: bad value or time step for Capacitor '" << name << "'. Skipping stamp." << std::endl;
         return;
     }
-    if (h <= 0) {
-        std::cerr << "Error: Invalid timestep h (" << h << ") for Capacitor '" << name << "'. Skipping stamp." << std::endl;
-        return;
-    }
-    double conductance_eq = value / h;
+    double geq = value / info.h;
 
-    int n1_idx = get_matrix_idx(node1, node_id_to_matrix_idx);
-    int n2_idx = get_matrix_idx(node2, node_id_to_matrix_idx);
+    int n1_idx = get_matrix_idx(node1, info.nodeIdx);
+    int n2_idx = get_matrix_idx(node2, info.nodeIdx);
 
-    double prev_V_n1 = (n1_idx != -1 && n1_idx < prev_solution.size()) ? prev_solution(n1_idx) : 0.0;
-    double prev_V_n2 = (n2_idx != -1 && n2_idx < prev_solution.size()) ? prev_solution(n2_idx) : 0.0;
+    double prev_v1 = (n1_idx != -1 && n1_idx < info.prev.size()) ? info.prev(n1_idx) : 0.0;
+    double prev_v2 = (n2_idx != -1 && n2_idx < info.prev.size()) ? info.prev(n2_idx) : 0.0;
 
-    if (n1_idx != -1) A(n1_idx, n1_idx) += conductance_eq;
-    if (n2_idx != -1) A(n2_idx, n2_idx) += conductance_eq;
-    if (n1_idx != -1 && n2_idx != -1) {
-        A(n1_idx, n2_idx) -= conductance_eq;
-        A(n2_idx, n1_idx) -= conductance_eq;
-    }
-
-    if (n1_idx != -1) {
-        b(n1_idx) += conductance_eq * (prev_V_n1 - prev_V_n2);
-    }
-    if (n2_idx != -1) {
-        b(n2_idx) += conductance_eq * (prev_V_n2 - prev_V_n1);
-    }
+    stampConductance(A, n1_idx, n2_idx, geq);
+    if (n1_idx != -1) b(n1_idx) += geq * (prev_v1 - prev_v2);
+    if (n2_idx != -1) b(n2_idx) -= geq * (prev_v1 - prev_v2);
 }
 
-void Inductor::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                        const std::map<int, int>& node_id_to_matrix_idx,
-                        int extra_var_start_idx,
-                        const Eigen::VectorXd& prev_solution,
-                        double h) {
-    if (A.rows() == 0 || A.cols() == 0) return;
-
-    if (value <= 0) {
-        std::cerr << "Error: Inductor '" << name << "' has a non-positive value (" << value << "). Skipping stamp." << std::endl;
+// backward euler: v = L/h * (i - i_prev)
+void Inductor::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) {
+    if (value <= 0 || info.h <= 0) {
+        std::cerr << "Error: bad value or time step for Inductor '" << name << "'. Skipping stamp." << std::endl;
         return;
     }
-    if (h <= 0) {
-        std::cerr << "Error: Invalid timestep h (" << h << ") for Inductor '" << name << "'. Skipping stamp." << std::endl;
-        return;
-    }
+    int n1_idx = get_matrix_idx(node1, info.nodeIdx);
+    int n2_idx = get_matrix_idx(node2, info.nodeIdx);
+    int k = info.extraStart + extraVariableIndex;
 
-    int n1_idx = get_matrix_idx(node1, node_id_to_matrix_idx);
-    int n2_idx = get_matrix_idx(node2, node_id_to_matrix_idx);
+    stampBranch(A, n1_idx, n2_idx, k);
+    A(k, k) -= value / info.h;
 
-    int current_var_idx = extra_var_start_idx + extraVariableIndex;
-
-    if (current_var_idx < 0 || current_var_idx >= A.rows()) {
-        std::cerr << "Warning: skipping stamp for " << name << " due to invalid matrix index.\n";
-        return;
-    }
-
-    if (n1_idx != -1) A(n1_idx, current_var_idx) += 1.0;
-    if (n2_idx != -1) A(n2_idx, current_var_idx) -= 1.0;
-
-    // Add checks to prevent accessing matrix with index -1
-    if (n1_idx != -1) A(current_var_idx, n1_idx) += 1.0;
-    if (n2_idx != -1) A(current_var_idx, n2_idx) -= 1.0;
-
-    A(current_var_idx, current_var_idx) -= (value / h);
-
-    double prev_I_L = (current_var_idx < prev_solution.size()) ? prev_solution(current_var_idx) : 0.0;
-    b(current_var_idx) -= (value / h) * prev_I_L;
+    double prev_i = (k < info.prev.size()) ? info.prev(k) : 0.0;
+    b(k) -= (value / info.h) * prev_i;
 }
 
-void VoltageSource::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                             const std::map<int, int>& node_id_to_matrix_idx,
-                             int extra_var_start_idx,
-                             const Eigen::VectorXd& prev_solution,
-                             double h) {
-    if (A.rows() == 0 || A.cols() == 0) return;
+void VoltageSource::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) {
+    int n1_idx = get_matrix_idx(node1, info.nodeIdx);
+    int n2_idx = get_matrix_idx(node2, info.nodeIdx);
+    int k = info.extraStart + extraVariableIndex;
 
-    int n1_idx = get_matrix_idx(node1, node_id_to_matrix_idx);
-    int n2_idx = get_matrix_idx(node2, node_id_to_matrix_idx);
-
-    int current_var_idx = extra_var_start_idx + extraVariableIndex;
-
-    if (current_var_idx < 0 || current_var_idx >= A.rows()) {
-        std::cerr << "Warning: skipping stamp for " << name << " due to invalid matrix index.\n";
-        return;
-    }
-
-    if (n1_idx != -1) A(n1_idx, current_var_idx) += 1.0;
-    if (n2_idx != -1) A(n2_idx, current_var_idx) -= 1.0;
-
-    // Add checks to prevent accessing matrix with index -1
-    if (n1_idx != -1) A(current_var_idx, n1_idx) += 1.0;
-    if (n2_idx != -1) A(current_var_idx, n2_idx) -= 1.0;
-
-    b(current_var_idx) += value;
+    stampBranch(A, n1_idx, n2_idx, k);
+    b(k) += value;
 }
 
-void CurrentSource::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                             const std::map<int, int>& node_id_to_matrix_idx,
-                             int extra_var_start_idx,
-                             const Eigen::VectorXd& prev_solution,
-                             double h) {
-    if (A.rows() == 0 || A.cols() == 0) return;
+void CurrentSource::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) {
+    int n1_idx = get_matrix_idx(node1, info.nodeIdx);
+    int n2_idx = get_matrix_idx(node2, info.nodeIdx);
 
-    int n1_idx = get_matrix_idx(node1, node_id_to_matrix_idx);
-    int n2_idx = get_matrix_idx(node2, node_id_to_matrix_idx);
-
+    // current flows from n1 through the source into n2
     if (n1_idx != -1) b(n1_idx) -= value;
     if (n2_idx != -1) b(n2_idx) += value;
 }
-void Diode::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                     const std::map<int, int>& node_id_to_matrix_idx,
-                     int extra_var_start_idx,
-                     const Eigen::VectorXd& current_guess,
-                     double h) {
-    if (A.rows() == 0 || A.cols() == 0) return;
 
-    int n1_idx = get_matrix_idx(node1, node_id_to_matrix_idx);
-    int n2_idx = get_matrix_idx(node2, node_id_to_matrix_idx);
-
-    double v1_guess = (n1_idx == -1) ? 0.0 : current_guess(n1_idx);
-    double v2_guess = (n2_idx == -1) ? 0.0 : current_guess(n2_idx);
-    double vd_guess = v1_guess - v2_guess;
-
-    // --- Diode Limiting for Numerical Stability ---
-    const double max_vd_forward = 0.85;
-    if (vd_guess > max_vd_forward) {
-        vd_guess = max_vd_forward;
+double Diode::currentAt(double vd) const {
+    if (model == "Z" && vd < -Vz) {
+        return Gz * (vd + Vz);
     }
-    // --- End of Limiting Logic ---
+    return Is * (std::exp(vd / (n * Vt)) - 1.0);
+}
+
+// linearized around the current guess: i = Geq*vd + Ieq
+void Diode::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) {
+    int n1_idx = get_matrix_idx(node1, info.nodeIdx);
+    int n2_idx = get_matrix_idx(node2, info.nodeIdx);
+
+    double v1 = (n1_idx == -1 || n1_idx >= info.guess.size()) ? 0.0 : info.guess(n1_idx);
+    double v2 = (n2_idx == -1 || n2_idx >= info.guess.size()) ? 0.0 : info.guess(n2_idx);
+    double vd = v1 - v2;
+
+    // limit the forward voltage, otherwise exp() blows up in the first iterations
+    const double max_vd_forward = 0.9;
+    if (vd > max_vd_forward) vd = max_vd_forward;
 
     double Geq, Ieq;
-
-    if (model == "Z" && vd_guess < -Vz) {
-        Geq = 1.0;
-        Ieq = Geq * Vz;
+    if (model == "Z" && vd < -Vz) {
+        Geq = Gz;
+        Ieq = Gz * Vz;
     } else {
-        double exp_val = std::exp(vd_guess / (n * Vt));
-        double id_val = Is * (exp_val - 1.0);
+        double exp_val = std::exp(vd / (n * Vt));
         Geq = (Is / (n * Vt)) * exp_val;
-        Ieq = id_val - Geq * vd_guess;
+        Ieq = Is * (exp_val - 1.0) - Geq * vd;
     }
 
-    // Stamping the equivalent circuit
-    if (n1_idx != -1) A(n1_idx, n1_idx) += Geq;
-    if (n2_idx != -1) A(n2_idx, n2_idx) += Geq;
-    if (n1_idx != -1 && n2_idx != -1) {
-        A(n1_idx, n2_idx) -= Geq;
-        A(n2_idx, n1_idx) -= Geq;
-    }
-
+    stampConductance(A, n1_idx, n2_idx, Geq);
     if (n1_idx != -1) b(n1_idx) -= Ieq;
     if (n2_idx != -1) b(n2_idx) += Ieq;
 }
-void vccs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                    const std::map<int, int>& node_id_to_matrix_idx,
-                    int extra_var_start_idx,
-                    const Eigen::VectorXd& prev_solution,
-                    double h) {
-    if (A.rows() == 0 || A.cols() == 0) return;
 
-    int n1 = get_matrix_idx(node1, node_id_to_matrix_idx);
-    int n2 = get_matrix_idx(node2, node_id_to_matrix_idx);
-    int c1 = get_matrix_idx(ctrl_node1, node_id_to_matrix_idx);
-    int c2 = get_matrix_idx(ctrl_node2, node_id_to_matrix_idx);
+void vccs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) {
+    int n1 = get_matrix_idx(node1, info.nodeIdx);
+    int n2 = get_matrix_idx(node2, info.nodeIdx);
+    int c1 = get_matrix_idx(ctrl_node1, info.nodeIdx);
+    int c2 = get_matrix_idx(ctrl_node2, info.nodeIdx);
 
     if (n1 != -1 && c1 != -1) A(n1, c1) += value;
     if (n1 != -1 && c2 != -1) A(n1, c2) -= value;
@@ -221,98 +142,105 @@ void vccs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
     if (n2 != -1 && c2 != -1) A(n2, c2) += value;
 }
 
+void vcvs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) {
+    int n1 = get_matrix_idx(node1, info.nodeIdx);
+    int n2 = get_matrix_idx(node2, info.nodeIdx);
+    int c1 = get_matrix_idx(ctrl_node1, info.nodeIdx);
+    int c2 = get_matrix_idx(ctrl_node2, info.nodeIdx);
+    int k = info.extraStart + extraVariableIndex;
 
-void vcvs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                    const std::map<int, int>& node_id_to_matrix_idx,
-                    int extra_var_start_idx,
-                    const Eigen::VectorXd& prev_solution,
-                    double h) {
-    if (A.rows() == 0 || A.cols() == 0) return;
-
-    int n1 = get_matrix_idx(node1, node_id_to_matrix_idx);
-    int n2 = get_matrix_idx(node2, node_id_to_matrix_idx);
-    int c1 = get_matrix_idx(ctrl_node1, node_id_to_matrix_idx);
-    int c2 = get_matrix_idx(ctrl_node2, node_id_to_matrix_idx);
-    int idx = extra_var_start_idx + extraVariableIndex;
-
-    if (n1 != -1) A(n1, idx) += 1;
-    if (n2 != -1) A(n2, idx) -= 1;
-
-    if (idx != -1 && n1 != -1) A(idx, n1) += 1;
-    if (idx != -1 && n2 != -1) A(idx, n2) -= 1;
-    if (idx != -1 && c1 != -1) A(idx, c1) -= value;
-    if (idx != -1 && c2 != -1) A(idx, c2) += value;
+    // v1 - v2 - gain*(vc1 - vc2) = 0
+    stampBranch(A, n1, n2, k);
+    if (c1 != -1) A(k, c1) -= value;
+    if (c2 != -1) A(k, c2) += value;
 }
 
-
-void cccs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                    const std::map<int, int>& node_id_to_matrix_idx,
-                    int extra_var_start_idx,
-                    const Eigen::VectorXd& prev_solution,
-                    double h) {
-    if (A.rows() == 0 || A.cols() == 0) return;
-
+void cccs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) {
     if (!controlling_elem) return;
-    int ctrl_idx = extra_var_start_idx + controlling_elem->extraVariableIndex;
+    int ctrl_idx = info.extraStart + controlling_elem->extraVariableIndex;
 
-    int n1 = get_matrix_idx(node1, node_id_to_matrix_idx);
-    int n2 = get_matrix_idx(node2, node_id_to_matrix_idx);
+    int n1 = get_matrix_idx(node1, info.nodeIdx);
+    int n2 = get_matrix_idx(node2, info.nodeIdx);
 
     if (n1 != -1) A(n1, ctrl_idx) += value;
     if (n2 != -1) A(n2, ctrl_idx) -= value;
 }
 
-void cccs::linkControlSource(const std::vector<Element*>& all) {
+// the controlling element has to be something with a current variable (V, L, E, H, ...)
+static Element* findControl(const std::string& who, const std::string& ctrl, const std::vector<Element*>& all) {
     for (Element* e : all) {
-        if (e->name == controlling_name) {
-            controlling_elem = e;
-            std::cerr << "[DEBUG] CCCS " << name << " linked to control source: " << controlling_name << std::endl;
-            return;
+        if (e->name != ctrl) continue;
+        if (!e->introducesExtraVariable) {
+            std::cerr << "Warning: " << who << " is controlled by " << ctrl
+                      << " but its current is not a circuit variable (use a voltage source or inductor)." << std::endl;
+            return nullptr;
         }
+        return e;
     }
-    std::cerr << "Warning: CCCS " << name << " could not find controlling source: " << controlling_name << std::endl;
+    std::cerr << "Warning: " << who << " could not find controlling source: " << ctrl << std::endl;
+    return nullptr;
 }
 
+bool cccs::linkControlSource(const std::vector<Element*>& all) {
+    controlling_elem = findControl(name, controlling_name, all);
+    return controlling_elem != nullptr;
+}
 
-
-
-
-void ccvs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                    const std::map<int, int>& node_id_to_matrix_idx,
-                    int extra_var_start_idx,
-                    const Eigen::VectorXd& prev_solution,
-                    double h) {
-    if (A.rows() == 0 || A.cols() == 0) return;
-
+void ccvs::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) {
     if (!controlling_elem) return;
-    int idx = extra_var_start_idx + extraVariableIndex;
-    int ctrl_idx = extra_var_start_idx + controlling_elem->extraVariableIndex;
+    int k = info.extraStart + extraVariableIndex;
+    int ctrl_idx = info.extraStart + controlling_elem->extraVariableIndex;
 
-    int n1 = get_matrix_idx(node1, node_id_to_matrix_idx);
-    int n2 = get_matrix_idx(node2, node_id_to_matrix_idx);
+    int n1 = get_matrix_idx(node1, info.nodeIdx);
+    int n2 = get_matrix_idx(node2, info.nodeIdx);
 
-    if (n1 != -1) A(n1, idx) += 1;
-    if (n2 != -1) A(n2, idx) -= 1;
-
-    if (idx != -1 && n1 != -1) A(idx, n1) += 1;
-    if (idx != -1 && n2 != -1) A(idx, n2) -= 1;
-    if (idx != -1 && ctrl_idx != -1) A(idx, ctrl_idx) -= value;
+    // v1 - v2 - r*i_ctrl = 0
+    stampBranch(A, n1, n2, k);
+    A(k, ctrl_idx) -= value;
 }
 
-void ccvs::linkControlSource(const std::vector<Element*>& all) {
-    for (Element* e : all) {
-        if (e->name == controlling_name) {
-            controlling_elem = e;
-            return;
-        }
+bool ccvs::linkControlSource(const std::vector<Element*>& all) {
+    controlling_elem = findControl(name, controlling_name, all);
+    return controlling_elem != nullptr;
+}
+
+void SinusoidalSource::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) {
+    int n1_idx = get_matrix_idx(node1, info.nodeIdx);
+    int n2_idx = get_matrix_idx(node2, info.nodeIdx);
+    int k = info.extraStart + extraVariableIndex;
+
+    stampBranch(A, n1_idx, n2_idx, k);
+    b(k) += getInstantaneousValue();
+}
+
+void PulseSource::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) {
+    int n1_idx = get_matrix_idx(node1, info.nodeIdx);
+    int n2_idx = get_matrix_idx(node2, info.nodeIdx);
+    int k = info.extraStart + extraVariableIndex;
+
+    stampBranch(A, n1_idx, n2_idx, k);
+    b(k) += getInstantaneousValue();
+}
+
+double PulseSource::getInstantaneousValue() const {
+    // Before the delay time, the voltage is at its initial value
+    if (time <= td) {
+        return v1;
     }
-    std::cerr << "Warning: CCVS " << name << " could not find controlling source: " << controlling_name << std::endl;
+
+    // per <= 0 means a single pulse
+    double t = time - td;
+    if (per > 0) t = std::fmod(t, per);
+
+    if (t < tr) {
+        return v1 + (v2 - v1) * (t / tr);
+    } else if (t < tr + pw) {
+        return v2;
+    } else if (t < tr + pw + tf) {
+        return v2 - (v2 - v1) * ((t - (tr + pw)) / tf);
+    }
+    return v1;
 }
-
-
-
-
-
 
 void Resistor::display() {
     std::cout << "Resistor " << name << ": " << value << " Ohms, Nodes: " << node1 << " - " << node2 << std::endl;
@@ -338,56 +266,11 @@ void Diode::display() {
     std::cout << "Diode " << name << ": Model = " << model
               << ", Nodes: " << node1 << " - " << node2 << std::endl;
 }
+
 void PulseSource::display() {
     std::cout << "Pulse Source " << name << ": "
               << "V1=" << v1 << "V, V2=" << v2 << "V, "
-              << "TD=" << td << "s, PW=" << pw << "s, PER=" << per << "s, "
+              << "TD=" << td << "s, TR=" << tr << "s, TF=" << tf << "s, "
+              << "PW=" << pw << "s, PER=" << per << "s, "
               << "Nodes: " << node1 << "-" << node2 << std::endl;
-}
-
-void PulseSource::stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                           const std::map<int, int>& node_id_to_matrix_idx,
-                           int extra_var_start_idx,
-                           const Eigen::VectorXd& prev_solution,
-                           double h) {
-    if (A.rows() == 0 || A.cols() == 0) return;
-
-    int extra_index = extra_var_start_idx + extraVariableIndex;
-    int idx1 = get_matrix_idx(node1, node_id_to_matrix_idx);
-    int idx2 = get_matrix_idx(node2, node_id_to_matrix_idx);
-
-    if (idx1 != -1) A(idx1, extra_index) += 1.0;
-    if (idx2 != -1) A(idx2, extra_index) -= 1.0;
-
-    if (idx1 != -1) A(extra_index, idx1) += 1.0;
-    if (idx2 != -1) A(extra_index, idx2) -= 1.0;
-
-    b(extra_index) += getInstantaneousValue();
-}
-
-double PulseSource::getInstantaneousValue() const {
-    // Before the delay time, the voltage is at its initial value
-    if (time <= td) {
-        return v1;
-    }
-
-    // After the delay, calculate time within the current period
-    double time_in_period = fmod(time - td, per);
-
-    // During the rise time
-    if (time_in_period < tr) {
-        return v1 + (v2 - v1) * (time_in_period / tr);
-    }
-        // During the pulse width (high plateau)
-    else if (time_in_period < tr + pw) {
-        return v2;
-    }
-        // During the fall time
-    else if (time_in_period < tr + pw + tf) {
-        return v2 - (v2 - v1) * ((time_in_period - (tr + pw)) / tf);
-    }
-        // After fall time until the next period (low plateau)
-    else {
-        return v1;
-    }
 }

@@ -4,12 +4,10 @@
 #ifndef MORGHSPICY_MNASOLVER_H
 #define MORGHSPICY_MNASOLVER_H
 
-#include <eigen3/Eigen/Dense>
-#include <complex>
+#include <Eigen/Dense>
 #include <map>
 
 class Graph;
-class Elements;
 
 class MNASolver {
 private:
@@ -17,49 +15,39 @@ private:
     Eigen::VectorXd b_vector;        // RHS
     Eigen::VectorXd solution_vector; // node voltages + extra currents
 
-    int num_ground_nodes{};
     int num_non_ground_nodes{};
-    int num_voltage_sources{};
-    int num_inductors{};
+    int num_extra_vars{};
     int total_unknowns{};
 
     std::map<int, int> node_id_to_matrix_idx;
 
+    // tiny conductance from every node to ground so floating nodes don't make A singular
     double gmin = 1e-12;
-    bool   skipDC = false;
+
 public:
-    MNASolver();
-    ~MNASolver() = default;
+    MNASolver() = default;
 
-    // 1) Matrix initialization
-    void initializeMatrix(const Graph& circuitGraph);
+    // returns false if the circuit can't be solved (no ground, empty, ...)
+    bool initializeMatrix(const Graph& circuitGraph);
 
-    // 2) Build the MNA system for a timestep
+    // build A and b for one time step / newton iteration
     void constructMNAMatrix(const Graph& circuitGraph, double timestep_h,
-                            const Eigen::VectorXd& prev_solution);
+                            const Eigen::VectorXd& prev_solution,
+                            const Eigen::VectorXd& guess);
 
-    // 3) Solve
+    // empty vector if the matrix is singular
     Eigen::VectorXd solve();
 
-    // Accessors
     const Eigen::VectorXd& getSolution() const { return solution_vector; }
     int getNumNonGroundNodes() const { return num_non_ground_nodes; }
-    int getNumVoltageSources() const { return num_voltage_sources; }
-    int getNumInductors() const { return num_inductors; }
     const std::map<int, int>& getNodeToMatrixIdxMap() const { return node_id_to_matrix_idx; }
     int getTotalUnknowns() const { return total_unknowns; }
-
     int getExtraVariableStartIndex() const { return num_non_ground_nodes; }
 
-    // Debug
     void displayMatrix() const;
     void displaySolution() const;
-    void displayNodeVoltages() const;
-    void displayElementCurrents(const Graph& circuitGraph) const;
 
-    bool hasUnknowns() const { return total_unknowns > 0; }
-    void setGmin(double g)   { gmin = g; }
-    void setSkipDC(bool s)   { skipDC = s; }
+    void setGmin(double g) { gmin = g; }
 };
 
 #endif //MORGHSPICY_MNASOLVER_H

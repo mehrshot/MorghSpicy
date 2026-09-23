@@ -5,14 +5,21 @@
 #include <vector>
 #include <map>
 #include <iostream>
-#include <eigen3/Eigen/Dense>
-#include "ElementTypes.h"
-#include <bits/stdc++.h>
 #include <cmath>
-#include<bits/stdc++.h>
+#include <numbers>
+#include <Eigen/Dense>
+#include "ElementTypes.h"
+
+// everything an element needs to stamp itself into the MNA system
+struct StampInfo {
+    const std::map<int, int>& nodeIdx;   // node id -> row in the matrix (ground is not in here)
+    int extraStart;                      // first row of the extra (current) variables
+    const Eigen::VectorXd& prev;         // solution at the previous time point
+    const Eigen::VectorXd& guess;        // current newton-raphson guess (only diode uses it)
+    double h;                            // time step
+};
 
 // Base class for all circuit elements
-
 class Element {
 public:
     std::string name;
@@ -24,8 +31,6 @@ public:
     bool introducesExtraVariable = false;
     // The index of this element's extra variable in the MNA matrix
     int extraVariableIndex = -1;
-    float x = 0.0f; // Position for graphical representation
-    float y = 0.0f;
 
     Element(std::string n, int n1, int n2, double v, ElementType t)
             : name(n), node1(n1), node2(n2), value(v), type(t) {}
@@ -34,28 +39,24 @@ public:
     void setValue(double newValue) { value = newValue; }
     double getValue() const { return value; }
 
-    // Pure virtual function for stamping the element's contribution to the MNA matrices
-    virtual void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                          const std::map<int, int>& node_id_to_matrix_idx,
-                          int extra_var_start_idx,
-                          const Eigen::VectorXd& prev_solution,
-                          double h) = 0;
-
+    virtual void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) = 0;
     virtual void display() = 0;
+
+    virtual bool isNonlinear() const { return false; }
 };
 
 class Resistor : public Element {
 public:
     Resistor(std::string n, int n1, int n2, double v) : Element(n, n1, n2, v, RESISTOR) {}
     void display() override;
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const std::map<int, int>& node_id_to_matrix_idx, int extra_var_start_idx, const Eigen::VectorXd& prev_solution, double h) override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) override;
 };
 
 class Capacitor : public Element {
 public:
     Capacitor(std::string n, int n1, int n2, double v) : Element(n, n1, n2, v, CAPACITOR) {}
     void display() override;
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const std::map<int, int>& node_id_to_matrix_idx, int extra_var_start_idx, const Eigen::VectorXd& prev_solution, double h) override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) override;
 };
 
 class Inductor : public Element {
@@ -64,7 +65,7 @@ public:
         introducesExtraVariable = true;
     }
     void display() override;
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const std::map<int, int>& node_id_to_matrix_idx, int extra_var_start_idx, const Eigen::VectorXd& prev_solution, double h) override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) override;
 };
 
 class VoltageSource : public Element {
@@ -73,50 +74,40 @@ public:
         introducesExtraVariable = true;
     }
     void display() override;
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const std::map<int, int>& node_id_to_matrix_idx, int extra_var_start_idx, const Eigen::VectorXd& prev_solution, double h) override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) override;
 };
 
 class CurrentSource : public Element {
 public:
     CurrentSource(std::string n, int n1, int n2, double v) : Element(n, n1, n2, v, CURRENT_SOURCE) {}
     void display() override;
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const std::map<int, int>& node_id_to_matrix_idx, int extra_var_start_idx, const Eigen::VectorXd& prev_solution, double h) override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) override;
 };
 
 class Diode : public Element {
 public:
-    std::string model;
+    std::string model;   // "D" = normal diode, "Z" = zener
 
-    // --- Model Parameters ---
-    double Is; // Saturation Current
-    double n;  // Ideality Factor
-    double Vt; // Thermal Voltage
+    // model parameters
+    double Is = 1e-14;    // saturation current
+    double n = 1.0;       // ideality factor
+    double Vt = 0.02585;  // thermal voltage at room temp
 
-    // --- Zener Model Parameters ---
-    double Vz; // Zener Breakdown Voltage
-    double Iz; // Zener Current at Vz
+    // zener
+    double Vz = 5.1;      // breakdown voltage
+    double Gz = 1.0;      // conductance in breakdown
 
     Diode(std::string name, int n1, int n2, std::string m)
-            : Element(name, n1, n2, 0.0, DIODE), model(m) {
-        // Initialize model parameters with common default values
-        Is = 1e-14;
-        n = 1.0;
-        Vt = 0.02585; // at room temperature
+            : Element(name, n1, n2, 0.0, DIODE), model(m) {}
 
-        // Default Zener voltage
-        Vz = 5.1;
-        Iz = 0.0;
-    }
+    double currentAt(double vd) const;
 
     void display() override;
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                  const std::map<int, int>& node_id_to_matrix_idx,
-                  int extra_var_start_idx,
-                  const Eigen::VectorXd& prev_solution,
-                  double h) override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) override;
+    bool isNonlinear() const override { return true; }
 };
 
-// dependent sources // بخدا خودم کامنت گذاشتم
+// dependent sources
 class vccs : public Element {
     int ctrl_node1, ctrl_node2;
 public:
@@ -131,25 +122,22 @@ public:
 
     int controlPos() const { return ctrl_node1; }
     int controlNeg() const { return ctrl_node2; }
+    void setControlNodes(int c1, int c2) { ctrl_node1 = c1; ctrl_node2 = c2; }
 
-
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                  const std::map<int, int>& node_id_to_matrix_idx,
-                  int extra_var_start_idx,
-                  const Eigen::VectorXd& prev_solution,
-                  double h) override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) override;
 };
 
 class vcvs : public Element {
     int ctrl_node1, ctrl_node2;
 public:
     vcvs(std::string n, int n1, int n2, int c1, int c2, double gain)
-        : Element(n, n1, n2, gain,ElementType:: VCVS), ctrl_node1(c1), ctrl_node2(c2) {
+        : Element(n, n1, n2, gain, ElementType::VCVS), ctrl_node1(c1), ctrl_node2(c2) {
         introducesExtraVariable = true;
     }
 
     int controlPos() const { return ctrl_node1; }
     int controlNeg() const { return ctrl_node2; }
+    void setControlNodes(int c1, int c2) { ctrl_node1 = c1; ctrl_node2 = c2; }
 
     void display() override {
         std::cout << "VCVS " << name << ": Gain = " << value
@@ -157,11 +145,7 @@ public:
                   << ", Control: " << ctrl_node1 << "-" << ctrl_node2 << std::endl;
     }
 
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                  const std::map<int, int>& node_id_to_matrix_idx,
-                  int extra_var_start_idx,
-                  const Eigen::VectorXd& prev_solution,
-                  double h) override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) override;
 };
 
 class cccs : public Element {
@@ -177,13 +161,11 @@ public:
                   << ", Control source: " << controlling_name << std::endl;
     }
 
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                  const std::map<int, int>& node_id_to_matrix_idx,
-                  int extra_var_start_idx,
-                  const Eigen::VectorXd& prev_solution,
-                  double h) override;
+    const std::string& controlName() const { return controlling_name; }
+    Element* controlElement() const { return controlling_elem; }
 
-    void linkControlSource(const std::vector<Element*>& all_elements);
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) override;
+    bool linkControlSource(const std::vector<Element*>& all_elements);
 };
 
 class ccvs : public Element {
@@ -201,54 +183,19 @@ public:
                   << ", Control source: " << controlling_name << std::endl;
     }
 
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                  const std::map<int, int>& node_id_to_matrix_idx,
-                  int extra_var_start_idx,
-                  const Eigen::VectorXd& prev_solution,
-                  double h) override;
+    const std::string& controlName() const { return controlling_name; }
+    Element* controlElement() const { return controlling_elem; }
 
-    void linkControlSource(const std::vector<Element*>& all_elements);
-
-};
-class Subcircuit : public Element {
-public:
-    std::vector<Element*> internalElements;
-
-    int internalPortNode1;
-    int internalPortNode2;
-
-    Subcircuit(std::string n, int n1, int n2)
-            : Element(n, n1, n2, 0.0, SUBCIRCUIT) {
-        introducesExtraVariable = false;
-    }
-
-    ~Subcircuit() {
-        for (Element* elem : internalElements) {
-            delete elem;
-        }
-        internalElements.clear();
-    }
-
-    void display() override {
-        std::cout << "Subcircuit " << name << ": connected to nodes " << node1 << " - " << node2
-                  << ", contains " << internalElements.size() << " internal elements." << std::endl;
-    }
-
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                  const std::map<int, int>& node_id_to_matrix_idx,
-                  int extra_var_start_idx,
-                  const Eigen::VectorXd& prev_solution,
-                  double h) override {
-
-    }
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) override;
+    bool linkControlSource(const std::vector<Element*>& all_elements);
 };
 
 class SinusoidalSource : public Element {
 private:
     double Voffset;
     double Vamplitude;
-    double frequency;
-    double phase;
+    double frequency;   // Hz
+    double phase;       // degrees
     double time;
 
 public:
@@ -261,38 +208,27 @@ public:
     void updateTime(double newTime) { time = newTime; }
 
     double getInstantaneousValue() const {
-        return Voffset + Vamplitude * sin(2 * std::numbers::pi * frequency * time + phase);
+        double ph = phase * std::numbers::pi / 180.0;
+        return Voffset + Vamplitude * std::sin(2 * std::numbers::pi * frequency * time + ph);
     }
+
+    double offset() const { return Voffset; }
+    double amplitude() const { return Vamplitude; }
+    double freq() const { return frequency; }
+    double phaseDeg() const { return phase; }
 
     void display() override {
         std::cout << "Sinusoidal Source " << name << ": "
                   << "Voffset=" << Voffset << "V, "
                   << "Amplitude=" << Vamplitude << "V, "
                   << "Frequency=" << frequency << "Hz, "
+                  << "Phase=" << phase << "deg, "
                   << "Nodes: " << node1 << "-" << node2 << std::endl;
     }
 
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                  const std::map<int, int>& node_id_to_matrix_idx,
-                  int extra_var_start_idx,
-                  const Eigen::VectorXd& prev_solution,
-                  double h) override {
-        int extra_index = extra_var_start_idx + extraVariableIndex;
-        int row1 = node_id_to_matrix_idx.count(node1) ? node_id_to_matrix_idx.at(node1) : -1;
-        int row2 = node_id_to_matrix_idx.count(node2) ? node_id_to_matrix_idx.at(node2) : -1;
-
-        if (row1 != -1) {
-            A(row1, extra_index) += 1;
-            A(extra_index, row1) += 1;
-        }
-        if (row2 != -1) {
-            A(row2, extra_index) -= 1;
-            A(extra_index, row2) -= 1;
-        }
-
-        b(extra_index) += getInstantaneousValue();
-    }
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) override;
 };
+
 class PulseSource : public Element {
 public:
     double v1, v2, td, tr, tf, pw, per;
@@ -311,11 +247,7 @@ public:
     double getInstantaneousValue() const;
 
     void display() override;
-    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b,
-                  const std::map<int, int>& node_id_to_matrix_idx,
-                  int extra_var_start_idx,
-                  const Eigen::VectorXd& prev_solution,
-                  double h) override;
+    void stampMNA(Eigen::MatrixXd& A, Eigen::VectorXd& b, const StampInfo& info) override;
 };
 
 #endif //MORGHSPICY_ELEMENTS_H
